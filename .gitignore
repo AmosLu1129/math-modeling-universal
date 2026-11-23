@@ -1,0 +1,26 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+
+# OS & editor clutter
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+
+# Local secrets / environment overrides
+.env
+.env.*
+
+# Per-skill _shared links/copies generated locally by install.py
+# Canonical source of truth is skills/_shared/
+skills/math-*/_shared/
+skills/math-*/_shared
+
+# Local installer state markers
+.math-modeling-managed.json

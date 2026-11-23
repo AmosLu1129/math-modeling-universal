@@ -1,0 +1,24 @@
+schema: 1
+project:
+  competition: null
+  language: zh
+  time_budget_hours: null
+  mode: competition
+decisions:
+  template: {value: null, status: pending, source: user}
+  engine: {value: latex, status: defaulted, source: workflow}
+  figure_style: {value: competition, status: defaulted, source: workflow}
+  mechanism_route: {value: svg, status: defaulted, source: workflow}
+  # 出图技术通路（v3.5.0 新增）。各项均为 DEFAULTABLE：未指定时按下述默认值执行并记 defaulted，
+  # 依赖阶段启动前用户仍可覆盖为 confirmed。取值与影响面见 math-figures「风格与技术通路」。
+  # 换了通路不能换掉验证：engine 为 svg/drawio/pptx/ai-base 时该图必须过 svg_audit.py。
+  figure_route:
+    engine:        {value: matplotlib, status: defaulted, source: workflow}  # matplotlib|svg|drawio|pptx|ai-base+svg|vega-lite
+    thresholds:    {value: competition, status: defaulted, source: workflow}  # competition|journal|screen
+    color_palette: {value: plot_style.PALETTE, status: defaulted, source: workflow}
+    export:        {value: [png, svg, pdf], status: defaulted, source: workflow}  # 必须写成列表/元组，勿用字符串
+    print_width_mm: {value: 160, status: defaulted, source: workflow}  # 必须等于论文实际插图宽度，否则字号判定失真
+    visual_edit:   {value: false, status: defaulted, source: workflow}  # true => 产出参数化 HTML 编辑器供用户手动微调
+stages: {}
+artifacts: {}
+approvals: []

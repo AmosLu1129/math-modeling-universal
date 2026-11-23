@@ -1,0 +1,46 @@
+% Report on Use of AI (COMAP MCM/ICM Standard Template)
+% Note: Under COMAP rules, place at the end of the PDF; it does not count toward the 25-page limit.
+% Populate every item strictly from work/iteration_log.md and review records; never fabricate examples.
+
+\newpage
+\thispagestyle{empty}
+\begin{center}
+  {\Large\bfseries Report on Use of AI}
+\end{center}
+\vspace{1em}
+
+\noindent\textbf{Team Control Number:} \TeamNumber \hfill \textbf{Problem Chosen:} \ProblemChosen
+
+\subsection*{1. AI Tools Used and Division of Labor}
+Our team used AI tools strictly as productivity aids under COMAP's AI policy. All modeling assumptions, mathematical formulations, parameter choices, and final interpretations were independently verified and decided by the team members.
+
+\begin{table}[htbp]
+\centering
+\caption{Summary of AI Tool Usage and Human Verification}
+\begin{tabular}{p{3.2cm}p{3.2cm}p{4.3cm}p{4.3cm}}
+\toprule
+Workflow Stage & AI Tool / Model & AI Assistance Provided & Human Verification \\
+\midrule
+Problem Analysis & [Model Name] & Cross-checking problem text and tables & Page-by-page human visual review \\
+Solver \& Figures & [Model Name] & Drafting Python solver and plotting scripts & Independent constraint checker \& unit tests \\
+Writing \& Editing & [Model Name] & Grammar polishing and LaTeX formatting & Line-by-line review against \texttt{results.json} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection*{2. Verification and Anti-Hallucination Protocol}
+\begin{itemize}
+  \item \textbf{Model-First Gate}: Mathematical formulations were locked and verified by team members prior to code implementation.
+  \item \textbf{Independent Constraint Checking}: A separate verification script checked every constraint and recomputed objective values independently of the solver.
+  \item \textbf{Single Source of Truth}: Every quantitative figure in the paper was checked bidirectionally against \texttt{results.json}; all references were verified via Crossref/arXiv metadata.
+\end{itemize}
+
+\subsection*{3. Concrete Examples of Human Corrections to AI Outputs}
+\begin{itemize}
+  \item \textbf{Case 1 (Formulation / Constraint Fix)}: [Describe specific mathematical/modeling error caught and fixed by the team]
+  \item \textbf{Case 2 (Code / Data Fix)}: [Describe specific indexing, unit, or solver bug caught by independent verification]
+  \item \textbf{Case 3 (Text / Consistency Fix)}: [Describe specific number mismatch or phrasing correction made during human review]
+\end{itemize}
+
+\subsection*{4. Statement of Responsibility}
+We affirm that this report accurately reflects all AI usage in our submission. All mathematical derivations, code, numerical results, citations, and conclusions have been thoroughly verified by our team, and we accept full responsibility for the integrity of the paper.

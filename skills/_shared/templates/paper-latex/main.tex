@@ -1,0 +1,149 @@
+% !TEX program = xelatex
+% 数学建模竞赛论文模板（国赛风格）
+% 编译：xelatex main.tex（需 TeX Live / MacTeX，含 ctex 宏包）
+% 结构：摘要 → 一、问题重述 → 二、问题分析 → 三、模型假设 → 四、符号说明
+%       → 五、模型建立与求解 → 六、模型检验与灵敏度 → 七、模型评价
+%       → 参考文献 → 附录
+
+\documentclass[12pt]{ctexart}
+
+\usepackage[a4paper, top=2.5cm, bottom=2.5cm, left=2.5cm, right=2.5cm]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}      % 三线表
+\usepackage{longtable}     % 跨页长表
+\usepackage{multirow}
+\usepackage{float}
+\usepackage{caption}
+\usepackage[hidelinks]{hyperref}
+
+\linespread{1.4}
+\setlength{\parindent}{2em}
+\graphicspath{{../../work/figures/}}   % 按实际项目路径调整
+
+\title{\textbf{题目：\LaTeX 论文模板}}
+\author{参赛队号：XXXXXXXXXX}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+% ==================== 摘要（单独一页） ====================
+\begin{center}
+{\Large\heiti 摘\quad 要}
+\end{center}
+
+本文针对\ldots\ldots 问题，建立了\ldots\ldots 模型。
+针对问题一，采用\ldots\ldots 方法，得到\ldots\ldots（关键结果，含数字）。
+针对问题二，\ldots\ldots。针对问题三，\ldots\ldots。
+
+最后对模型进行了灵敏度分析与优缺点评价。
+
+\noindent\textbf{关键词：}关键词一；关键词二；关键词三
+
+\clearpage
+
+% ==================== 一、问题重述 ====================
+\section*{一、问题重述}
+
+简要复述题目背景与要求，注意：\textbf{问题重述不是抄题}，要提炼要点。
+
+% ==================== 二、问题分析 ====================
+\section*{二、问题分析}
+
+对每个小问逐一分析：需要什么数据、适合什么方法、如何组织求解。
+
+% ==================== 三、模型假设 ====================
+\section*{三、模型假设}
+
+\begin{enumerate}
+  \item 假设一（可辩护、可检验）。
+  \item 假设二。
+\end{enumerate}
+
+% ==================== 四、符号说明 ====================
+\section*{四、符号说明}
+
+\begin{table}[H]
+\centering
+\caption{主要符号说明}
+\begin{tabular}{clc}
+\toprule
+符号 & 含义 & 单位 \\
+\midrule
+$x_i$ & 第 $i$ 个决策变量 & —— \\
+$f$   & 目标函数值 & —— \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ==================== 五、模型建立与求解 ====================
+\section*{五、模型建立与求解}
+
+\subsection*{5.1 问题一模型的建立}
+
+模型假设与符号说明基础上，建立如下模型：
+\begin{equation}
+  \min f = \sum_{i=1}^{n} c_i x_i
+  \label{eq:obj}
+\end{equation}
+\begin{equation}
+  \text{s.t.}\quad \sum_{i=1}^{n} a_{ij} x_i \le b_j, \quad j = 1, \dots, m
+  \label{eq:cons}
+\end{equation}
+
+\subsection*{5.2 问题一模型的求解}
+
+求解方法简述（求解器、算法、参数），给出结果并配图配表。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth]{fig_1_result.png}
+\caption{问题一结果示意图}
+\end{figure}
+
+\subsection*{5.3 问题一最终模型（迭代完成后的完整形式）}
+
+% 硬性要求：给出迭代完成后的最终方程，全部参数数值代入
+将参数代入方程 \eqref{eq:obj} 与 \eqref{eq:cons}，最终模型为：
+\begin{equation}
+  \min f = 0.32 x_1 + 0.58 x_2 + 0.41 x_3
+\end{equation}
+
+\subsection*{5.4 问题二……（同上结构）}
+
+% ==================== 六、模型检验与灵敏度 ====================
+\section*{六、模型检验与灵敏度分析}
+
+误差指标（R² / RMSE / MAE 等）、交叉验证、残差分析、参数扰动 $\pm 5\% \sim \pm 20\%$ 的结果变化表。
+
+\begin{table}[H]
+\centering
+\caption{灵敏度分析结果}
+\begin{tabular}{lccc}
+\toprule
+参数 & $-20\%$ & 基准 & $+20\%$ \\
+\midrule
+$\alpha$ & 0.91 & 1.00 & 1.12 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ==================== 七、模型评价 ====================
+\section*{七、模型评价（优缺点）}
+
+客观列出模型优点与不足，以及改进方向。
+
+% ==================== 参考文献 ====================
+\begin{thebibliography}{9}
+  \bibitem{ref1} 作者. 文章标题[J]. 期刊名, 年份, 卷(期): 页码.
+  \bibitem{ref2} Author. Title[C]//Proceedings. Year.
+\end{thebibliography}
+
+% ==================== 附录 ====================
+\section*{附录}
+
+关键代码片段（完整代码见附件 \texttt{code\_appendix.pdf}）。
+
+\end{document}
