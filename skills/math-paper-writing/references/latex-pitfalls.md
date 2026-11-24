@@ -13,11 +13,12 @@
 - **编辑 `main.tex` 后查宏包**：确保 `graphicx / float / amsmath / amssymb / booktabs / listings / hyperref / array` 齐全且无重复定义。
 - **Overfull 清洁查法**：增量编译时 `main.log` 可能残留旧行号 Overfull，复核前先删除旧 `.log/.aux` 再干净重编两遍。
 
-## 3. 三线表生成（`make_tables.py`）四条硬契约（防静默出错）
+## 3. 三线表与版式防错（`make_tables.py`）五条硬契约（防静默出错）
 1. **`%` 双转义吞整行**：`replace("%", "\\\\%")` 会生成 `\\%`，在 `tabular` 中 `\\` 被当换行、`%` 成注释，导致整行后半静默消失。正确写法：`re.sub(r"(?<!\\)%", r"\\%", s)`。
 2. **`_ # &` 只在数学模式外转义**：按 `re.split(r"(\$[^$]*\$)")` 分段，保护 `$Z_1$` 下标，同时转义正文明文 `N_pen0`。
 3. **题注里的 `#` 必须转义**（`caption.replace("#", "\\#")`），否则 `nameref` 报错。
 4. **浮动体不嵌套**：若生成的 `*.tex` 已自带 `\begin{table}`，正文直接 `\input`，禁止再套一层 `\begin{table}`；表头缩短、单位移入题注；长表格用 `\small`/`\footnotesize` 或改为逐行记录式，换行用 `>{\raggedright\arraybackslash}p{宽}`。
+5. **宽表缩放与公式对齐符转义红线**：宽表统一套用 `\resizebox{\textwidth}{!}{%` 时，大括号后必须是裸注释符号 `%`（**绝不能写成 `\%`**，否则表格左上角会凭空印出 `%` 并可能报错）；批量转义 `&`→`\&` 的脚本必须跳过 `cases`/`dcases`/`aligned`/`align`/`matrix`/`array` 等数学对齐环境，否则会把数学列分隔符 `&` 破坏成字面量 `\&` 导致编译/对齐失效。
 
 ## 4. 公式与页数预算
 - 公式编号一律 `\label` + `\eqref`，禁止硬编码“式(5)”；多行长盒式公式用 `\boxed{\begin{gathered}...\end{gathered}}`。

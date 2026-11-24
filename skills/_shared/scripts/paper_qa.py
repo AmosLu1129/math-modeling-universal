@@ -121,6 +121,46 @@ def check_source_hygiene(paper_dir: Path, main_name: str | None = None) -> Check
             continue
         rel = path.relative_to(paper_dir).as_posix()
         if mode == "tex":
+            # 在剥离数学环境前拦截两类高频 LaTeX 源码硬错（保留行号与字面反斜杠）
+            raw_no_verb = re.sub(
+                r"\\begin\{(?:lstlisting|verbatim|Verbatim|minted|comment)\}.*?\\end\{(?:lstlisting|verbatim|Verbatim|minted|comment)\}",
+                _preserve_newlines,
+                raw,
+                flags=re.S,
+            )
+            raw_no_verb = re.sub(
+                r"\\lstinline(?:\[[^\]]*\])?(?:(.)(.*?)\1|\{[^}]*\})",
+                _preserve_newlines,
+                raw_no_verb,
+                flags=re.S,
+            )
+            raw_no_verb = re.sub(r"\\verb\*?(.)(.*?)\1", _preserve_newlines, raw_no_verb, flags=re.S)
+            raw_no_verb = re.sub(r"((?<!\\)(?:\\\\)*)%[^\n]*", r"\1", raw_no_verb)
+
+            for lno, line in enumerate(raw_no_verb.splitlines(), 1):
+                if re.search(r"\\(?:resizebox|scalebox)\{[^{}]*\}(?:\{[^{}]*\})?\{\s*\\%", line):
+                    issues.append(
+                        f"{rel}:{lno}: 检测到 \\resizebox/\\scalebox 括号后误写 \\%（应为行尾注释 %，否则会在表前打印多余百分号）"
+                    )
+
+            align_env_re = re.compile(
+                r"\\begin\{(cases|dcases|aligned|align\*?|matrix|pmatrix|bmatrix|vmatrix|array)\}(.*?)\\end\{\1\}",
+                flags=re.S,
+            )
+            for m_env in align_env_re.finditer(raw_no_verb):
+                start_line = raw_no_verb[: m_env.start()].count("\n") + 1
+                inner = m_env.group(2)
+                inner_clean = re.sub(
+                    r"\\(?:text|textrm|mathrm|mbox|texttt|textbf|textit)\{(?:[^{}]|\{[^{}]*\})*\}",
+                    _preserve_newlines,
+                    inner,
+                )
+                for offset, eline in enumerate(inner_clean.splitlines()):
+                    if re.search(r"(?<!\\)(?:\\\\)*\\&", eline):
+                        issues.append(
+                            f"{rel}:{start_line + offset}: 公式对齐环境 `{m_env.group(1)}` 内检测到误转义 \\&（对齐符应为裸 &）"
+                        )
+
             clean = _strip_tex_nonprose(raw)
             for lno, line in enumerate(clean.splitlines(), 1):
                 if re.search(r"(?<!\*)\*\*(?!\s|\*)[^*\n]+?(?<!\s|\*)\*\*(?!\*)", line):
@@ -767,6 +807,34 @@ def self_test() -> int:
             encoding="utf-8",
         )
         assert check_source_hygiene(hyg_bad, "main.tex").level == "PASS"
+
+        # 1b. LaTeX traps: \resizebox{!}{\% & escaped \& inside alignment envs vs valid syntax
+        hyg_tex_bad = root / "hyg_tex_bad"
+        hyg_tex_bad.mkdir()
+        (hyg_tex_bad / "main.tex").write_text(
+            "\\resizebox{\\textwidth}{!}{\\%\n"
+            "\\begin{tabular}{cc} a & b \\end{tabular}}\n"
+            "\\begin{equation}\n"
+            "g(v) = \\begin{cases} \\ln v, \\& \\lambda = 0, \\\\\n"
+            "v, \\& \\lambda > 0 \\end{cases}\n"
+            "\\end{equation}\n",
+            encoding="utf-8",
+        )
+        r1b = check_source_hygiene(hyg_tex_bad, "main.tex")
+        assert r1b.level == "FAIL" and len(r1b.details) == 3, r1b
+
+        (hyg_tex_bad / "main.tex").write_text(
+            "\\resizebox{\\textwidth}{!}{%\n"
+            "\\begin{tabular}{cc} a & b \\end{tabular}}\n"
+            "\\begin{equation}\n"
+            "\\begin{aligned}\n"
+            "g(v) &= \\begin{cases} \\ln v, & \\lambda = 0, \\text{A \\& B} \\\\\\\\\n"
+            "v, & \\lambda > 0 \\end{cases} \\\\& z = 1\n"
+            "\\end{aligned}\n"
+            "\\end{equation}\n",
+            encoding="utf-8",
+        )
+        assert check_source_hygiene(hyg_tex_bad, "main.tex").level == "PASS", check_source_hygiene(hyg_tex_bad, "main.tex")
 
         # 2. COMPILE-LOG parser
         r_ov_fail = audit_compile_log("Overfull \\hbox (18.5pt too wide) in paragraph\n", overfull_pt=10.0)

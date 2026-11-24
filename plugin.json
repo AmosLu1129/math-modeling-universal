@@ -1,6 +1,6 @@
 {
   "name": "math-modeling-universal",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "description": "Cross-agent mathematical modeling competition workflow (11 Agent Skills compatible with Claude Code, Codex, OpenCode, DeepSeek Harness dsh, Qoder, Trae, Cursor, Windsurf, Gemini CLI, and Antigravity).",
   "author": {
     "name": "Math Modeling Workflow Team"

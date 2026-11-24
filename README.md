@@ -1,4 +1,4 @@
-# Math Modeling Universal Skills (`v4.0`)
+# Math Modeling Universal Skills (`v4.1`)
 
 跨 Agent、遵循 [Agent Skills 开放标准](https://agentskills.io) 的数学建模竞赛全流程技能包（11 个模块化 Skill + 共享工具链 `_shared/`）。一次安装，在 **Claude Code、OpenAI Codex、OpenCode、DeepSeek Harness (`dsh`)、Qoder / Qoder CN、Trae CN、Cursor、Windsurf、Gemini CLI 与 Antigravity** 中全局直接调用。
 
@@ -12,13 +12,18 @@
 | `math-problem-analysis` | S1 审题拆题 | 隐藏文本/零宽字符/白底小字防 AI 误导审计 (`problem_integrity_check.py`)、双通道视觉对照 |
 | `math-data-prep` | S2 数据清洗 | `.mat` / `.xlsx` / `.csv` 清洗、无附件参数字典与量级预检 |
 | `math-literature-review` | S3 文献综述 | Crossref / OpenAlex / arXiv / CNKI 调研与 DOI 真实性活体校验 (`verify_references.py`) |
-| `math-model-design` | S4 模型设计 | 奥卡姆剃刀基线升级、P1 六要素形式化与 Pareto 范式锁定 (`check_formulation.py --phase p1`) |
-| `math-model-solver` | S5 编程求解 | 求解器实现、`C1`–`C...` 独立约束检查、迭代日志 (`<=4` 轮)、`results.json` (`--phase p3`) |
-| `math-model-validation` | S6 验证定稿 | 极限退化、求解器交叉检验、灵敏度/噪声地板、`validation_report.md`、`fact_sheet.md` (`--phase all`) |
+| `math-model-design` | S4 模型设计 | 奥卡姆剃刀基线升级、第一性原理/非冗余/非循环留出审计与 Pareto 范式锁定 (`check_formulation.py --phase p1`) |
+| `math-model-solver` | S5 编程求解 | 闭式校验 + 非构造性 OOS 基线、独立约束检查、统一后验集合与 `key_metrics` 契约 (`--phase p3`) |
+| `math-model-validation` | S6 验证定稿 | 极限退化、离散度-相关性 2D 相变扫描、严格内点与跨节零漂移验证 (`--phase all`) |
 | `math-figures` | S7 出版图表 | 11 套高级模板、静态预检 (`validate_figure_src.py`)、`layout_qa`、`figure_qa`、`audit_pdf_text`、拼图复核 |
-| `math-paper-writing` | S8 论文写作 | 14 中 + 3 英竞赛模板、`export_paper_macros.py` 单源绑定（`\ResVal`/`\ResPct` + Booktabs 表格） |
+| `math-paper-writing` | S8 论文写作 | 14 中 + 3 英竞赛模板、`export_paper_macros.py` 单源绑定（`\ResVal`/`\ResPct` + TeX 宽表/公式防误转义） |
 | `math-paper-humanize` | S9 人工化润色 | 中英双通道去套话、改写不变量校验 (`invariance_check.py`)、竞赛级 AI 使用披露 |
-| `math-paper-review` | S10 终审打包 | 红队审查、`paper_qa.py`（页数/Overfull/字体嵌入）、`consistency_check.py`（防幻觉数字）、代码附件与提交包 |
+| `math-paper-review` | S10 终审打包 | 红队审查、`paper_qa.py`（页数/Overfull/`\%`&`\&` 源码拦截）、4 边触边检测 (`render_check.py`)、`consistency_check.py` 与提交包 |
+
+### `v4.1` 更新要点（2026 MCM C 深度评审闭环沉淀）
+- **模型设计与归因防线（S4）**：强制检查标准化/排序前的**代数抵消参数**（如 $z(\gamma \ln v) \equiv z(\ln v)$ 改用 Box-Cox $\lambda$）；禁止把争议案例写进硬约束制造假 100%，强制划分 **Train/Holdout** 留出集；反演隐变量回归必须配**无反演直接观测通道**、BH-FDR $q$ 值及 $n<10$ 低功效标记。
+- **反演 OOS 与统一后验口径（S5/S6）**：强制区分**样本内可行性**与**无泄露非构造性 OOS 基线**（Naive / 顺延 / LOSO）；当点估计压平变异性时强制扫描**离散度比 × 相关性 2D 相变边界 $R^*(\rho)$**；统一主表与敏感性分析的抽样集合，前置 `key_metrics` 契约且前沿剪枝后必重算 `HV`。
+- **排版与打包自动化门禁（S8/S10）**：`paper_qa.py` 新增拦截 `\resizebox/\scalebox{!}{\%` 与对齐环境内 `\&`；修复 `render_check.py` 四边（`top/bottom/left/right`）内容触边检测；`consistency_check.py` 扩展 SD/companion frontier 明细过滤；提交打包前清理 `__pycache__`。
 
 ---
 

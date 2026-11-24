@@ -26,7 +26,7 @@ description: 审查与润色建模论文并准备提交：支持独立红队子�
 
 ## 二、版面与排版硬规范（渲染 + 原生视觉复核）
 
-1. **渲染全页 + 空白/触边检测**：
+1. **渲染全页 + 空白/四边（top/bottom/left/right）触边检测**：
    ```bash
    python _shared/scripts/render_check.py output/paper/paper.pdf --out work/scratch/paper_pages --dpi 90
    ```
@@ -36,7 +36,7 @@ description: 审查与润色建模论文并准备提交：支持独立红队子�
    ```bash
    python _shared/scripts/paper_qa.py --paper-dir output/paper --compile --clean --competition auto --out work/paper_qa_report.md
    ```
-   单命令串联六项检查并兜底：① `SOURCE-HYGIENE`（拦截 `.tex` 裸 Markdown `**`/`##`/`[url]`/单反引号代码 或 `.typ` LaTeX 残留与占位符）；② `COMPILE-LOG`（干净双编译、`Overfull \hbox > 10pt`、`^!` 错误与未定义引用）；③ `PAGE-LIMIT`（自动排除 MCM/ICM 文末 Report on Use of AI 后的 25 页上限 / 国赛 20 页上限）；④ `SUMMARY-OVERFLOW`（严查 Summary Sheet 溢出第 1 页）；⑤ `FONT-EMBED`（`pdffonts` 全嵌入与 0 Type 3）；⑥ `FIGURE-AUDIT`（全部 `\includegraphics`/`#image` 存在性与 PDF 插图字号）。
+   单命令串联六项检查并兜底：① `SOURCE-HYGIENE`（拦截 `.tex` 裸 Markdown `**`/`##`/`[url]`/单反引号代码、`\resizebox`/`\scalebox` 括号后误写 `\%`、公式对齐环境内误写 `\&`，或 `.typ` LaTeX 残留与占位符）；② `COMPILE-LOG`（干净双编译、`Overfull \hbox > 10pt`、`^!` 错误与未定义引用）；③ `PAGE-LIMIT`（自动排除 MCM/ICM 文末 Report on Use of AI 后的 25 页上限 / 国赛 20 页上限）；④ `SUMMARY-OVERFLOW`（严查 Summary Sheet 溢出第 1 页）；⑤ `FONT-EMBED`（`pdffonts` 全嵌入与 0 Type 3）；⑥ `FIGURE-AUDIT`（全部 `\includegraphics`/`#image` 存在性与 PDF 插图字号）。
    另留意 `\usepackage[hidelinks]{hyperref}` 去链接框、`thebibliography` 与手动标题不重名、`pdffonts` 无未嵌入 `STFangsong`。
 
 ## 三、独立红队子代理审查（`high_assurance` 推荐）
@@ -57,5 +57,5 @@ description: 审查与润色建模论文并准备提交：支持独立红队子�
    python _shared/scripts/code_appendix.py --code work/code/ --out output/code_appendix.pdf
    ```
    支持 `pandoc`、`xelatex`（原生 `listings` + 跨平台 CJK 字体，无 pandoc 时首选）、`typst` 与 `reportlab` 引擎（可用 `--engine` 指定）。确认收录 `work/code/` 全部最终脚本（含共享模块），代码参数与 `final_models.md` 一致且可复现 `results.json`。
-2. **打包提交目录 `output/submission/`**：放入 `paper.pdf`、`code_appendix.pdf`、`code/` 及规则允许的数据，按竞赛要求生成校验文件（如 `MD5.txt`）与文件清单。
+2. **打包提交目录 `output/submission/`**：放入 `paper.pdf`、`code_appendix.pdf`、仅含清洁源码的 `code/`（打包前先清除 `__pycache__/` 与 `*.pyc`）及规则允许的数据，最后生成校验文件（如 `MD5.txt`）与文件清单。
 3. **质量关卡**：critical 问题回退对应环节重跑；通过或经用户确认/WAIVE 后冻结发布包。

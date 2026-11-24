@@ -1,6 +1,6 @@
 {
   "name": "math-modeling",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "description": "End-to-end mathematical modeling workflow (problem integrity gate, data prep, Crossref lit review, model-first SOP, reproducible solving, validation, 300-dpi figures, LaTeX/Typst writing, humanization invariance, and pre-submission QA).",
   "author": {
     "name": "Math Modeling Workflow Team"

@@ -43,7 +43,7 @@ description: 撰写数学建模竞赛论文（国赛/MCM/ICM/华为杯等）：�
    python _shared/scripts/fact_sheet.py --results work/results.json --out work/fact_sheet.md
    python _shared/scripts/export_paper_macros.py --results work/results.json --out-tex output/paper/results_macros.tex --tables-dir work/tables
    ```
-   正文中优先用 `\ResVal{path}` / `\ResPct{path}` / `\ResInt{path}`（或 Typst `--out-typ output/paper/results_data.typ` 的 `#res("path")`）与 `\input{../../work/tables/*.tex}` 直接绑定 `results.json`——禁止手抄数字，缺失键会在编译期直接报错；重跑阶段 5/6 后重跑一次宏导出并重编译即可全自动同步。
+   正文中优先用 `\ResVal{path}` / `\ResPct{path}` / `\ResInt{path}`（或 Typst `--out-typ output/paper/results_data.typ` 的 `#res("path")`）与 `\input{../../work/tables/*.tex}` 直接绑定 `results.json`——禁止手抄近似数或未经校验的派生数；重跑/前沿剪枝后必先刷新 `fact_sheet.md` 与宏导出再重编译全自动同步。**TeX 宽表与对齐符红线**：宽表一律套用 `\resizebox{\textwidth}{!}{%` 且行尾必须是裸 `%`（严禁误写为 `\%`）；全局 `&`→`\&` 转义严禁作用于 `cases`/`aligned`/`align`/`matrix`/`array` 等数学对齐环境内部。
 2. **最终公式完整独立呈现**：每问结尾对照 `work/final_models.md` 给出完整编号方程 + 参数代入 + 指标。
 3. **代码与论文设定逐行一致**：论文声称的效应、特征、约束必须对照 `work/code/` 核实，禁止“论文写 A、代码跑 B”。
 4. **多目标小问不得只报单点“最优数”**：必须呈现 Pareto 解集（点数、覆盖区间、前沿图）+ 折中点选取规则 + 范式理由；不可行问题如实交代冲突分析。
