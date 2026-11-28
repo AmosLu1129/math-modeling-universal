@@ -54,6 +54,9 @@
 | `groundbreaking` / `unprecedented` / `revolutionary` / `cutting-edge` | **促销性夸大**，删或降级为可验证陈述 |
 | `highly robust` / `comprehensive solution` | → 给出**具体指标**（"stable across 5 seeds, HV spread 3.6–7.0%"） |
 | `researchers have shown` / `experts argue` / `studies suggest` | **虚指归因**：给不出具体来源就是没有来源 → 补引用或删 |
+| `strictly` / `cleanly` / `crucially` / `fundamentally` / `seamlessly` / `remarkably` / `demonstrably` | **AI 高频修饰副词**：绝大部分直接删除，让具体数字与对比自行证明 |
+| `proves` / `exact` / `fatally flawed` | **过度绝对断言**：数值仿真与统计模型改为 `establishes` / `indicates` / `within 1e-4` / `numerically reproduces` |
+| 内部工程/配色/质检泄漏词（`Safety Standards`、`Code-to-Academic`、`Morandi`、`terracotta`、`machine precision`、`300 DPI HTML`） | **跨态泄漏**：一律转为纯学术表达或删除 |
 
 ### 2.2 句式结构
 
@@ -83,6 +86,23 @@
 
 `../_shared/scripts/consistency_check.py --check-fabricated` 已在查**幻觉数字**；
 本通道的清单负责**文风**，两者不互相替代。数字类问题一律以那个脚本为准。
+
+### 2.5 克制科研者风格与可选轻修辞边界（默认关闭）
+
+> **默认关闭（O 奖审稿纪律）**：MCM/ICM 默认采用**简洁、冷静、去修辞化的科研作者语气**——短句为主、让数字说话、不主动加俏皮话或拟人比喻。**仅当用户明确要求**增加语言风格特色时，才允许按下述严格限额在极少数过渡句轻点（严禁拟人调侃，如 *"No mathematical model stays polite..."* 一律禁用）。
+
+**硬性剂量与边界规则（仅显式开启时适用）**：
+
+1. **默认剂量 `0 处`（显式开启上限 `≤ 2–3 处`）**：仅作短句措辞微调，**严禁为了凑修辞单写段落**。
+2. **仅允许落点**：① Introduction 破题反差；② 模型迭代反思过渡句；③ Strengths & Weaknesses 点睛收束句。
+3. **绝对禁区**：**严禁**出现于 Summary 首段、数学公式推导、Model Assumptions 条文、统计检验、表格注释、图注与备忘录行动指令；**禁用**拟人修辞、网络梗、感叹号（`!`）与浮夸自夸。
+4. **科学守恒门禁**：润色前后必须跑通第 3 节 `invariance_check.py`，确保数值、单位、因果方向、不确定性区间与 `claim boundary` **零偏移**。
+
+| 场景 | 机械平铺直叙（应替换） | 克制清晰的专业表达（默认推荐） |
+|---|---|---|
+| **破题反差** | *In reality, fan votes sometimes did not match judge scores.* | *Historical outcomes frequently diverge from rubric-based expectations, creating tension between expert criteria and actual trajectories.* |
+| **优化器漏洞复盘** | *Without a capacity cap, the linear program yielded an unrealistic corner solution.* | *Without an explicit inventory penalty, the baseline LP collapsed onto an unrealistic corner solution—motivating our capacity bound.* |
+| **边界坦诚反思** | *Our continuous ODE misses sudden behavior spikes.* | *Smooth continuum assumptions capture bulk transport well, whereas abrupt behavioral shifts leave structured outliers above the linear threshold.* |
 
 ## 3. 强制的机器校验（改完必跑）
 

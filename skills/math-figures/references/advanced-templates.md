@@ -1,11 +1,16 @@
 # 高级图模板库（现成脚本，可直接改数据复用）
 
-`../_shared/scripts/advanced_templates/` 内置 11 个出版级图模板（含可直接运行的 Python 脚本）。当论文需要这些图型时，优先复用模板，而不是从零写。
+`_shared/scripts/advanced_templates/` 内置 **16 个**出版级图模板（含可直接运行的 Python 脚本，支持零参数默认演示及 `--config data.json --out-stem ...` 注入赛题数据）。当论文需要这些图型时，优先复用模板，而不是从零写。
 
 ## 模板清单
 
 | id | 图型 | 适用场景 | 脚本 |
 |---|---|---|---|
+| `morandi-3d-bar-heatmap` | **莫兰迪 2D 瓷砖热图 + 3D 立体柱状热图双联** | 二维参数空间/耗电/磨损率全貌展示（左精读+右立体冲击力，自动防遮挡视角） | `make_morandi_3d_bar_heatmap.py` |
+| `morandi-3d-surface-proj` | **莫兰迪 3D 响应曲面 + 底面等高投影** | 连续二元相变场、温度×老化悬崖、双参数敏感曲面 | `make_morandi_3d_surface_proj.py` |
+| `morandi-ridgeline` | **莫兰迪多组层叠山脊图（KDE）** | 多情景/多时代/多方案后验分布形态对比 | `make_morandi_ridgeline.py` |
+| `morandi-dumbbell` | **莫兰迪前后对比哑铃图 + 增益徽章** | Before-vs-After 结构性改进视觉证明（替代呆板分组柱图） | `make_morandi_dumbbell.py` |
+| `morandi-sankey-flow` | **莫兰迪多级流动桑基图** | 能耗预算、客流/资金/票权流向分配展示 | `make_morandi_sankey_flow.py` |
 | `multiclass-shap-combo` | 多分类 SHAP 柱状 + 蜂群组合图 | 机器学习模型特征重要性解释 | `make_multiclass_shap_combo.py` |
 | `paired-raincloud` | 配对云雨图 | 前后对比/配对设计，同时展示分布、散点与均值趋势 | `make_paired_raincloud.py` |
 | `cv-roc-ci` | 交叉验证 ROC + 置信带 | 分类模型稳健性，AUC 均值±标准差 | `make_cv_roc_ci.py` |
@@ -20,15 +25,15 @@
 
 ## 用法
 
-1. 从 `../_shared/scripts/advanced_templates/scripts/templates/` 把对应脚本复制到项目的 `work/code/` 或临时目录，替换其中的示例数据为 `results.json` 的真实数据。
-2. 运行脚本（PNG/PDF/SVG 三格式输出，300 DPI）。
-3. 套用本技能样式规范：最终尺寸、中文字体、编号题注，然后照常过自检闭环。
+1. 从 `_shared/scripts/advanced_templates/scripts/templates/` 把对应脚本复制到项目的 `work/code/` 或临时目录，替换示例数据（其中 `morandi-*` 模板可直接传 `--config work/tables/fig_data.json --out-stem work/figures/fig_xx` 零改代码出图）。
+2. 运行脚本（PNG/PDF/SVG 三格式输出，300 DPI，纯矢量无位图嵌入）。
+3. 套用本技能样式规范：最终尺寸、跨平台字体、`stixsans` 数学上下标、编号题注，然后照常过自检闭环。
 
 或者直接调用渲染器：
 
 ```bash
-python ../_shared/scripts/advanced_templates/scripts/render_template.py --list   # 列出全部模板
-python ../_shared/scripts/advanced_templates/scripts/render_template.py paired-raincloud --project 绘图复刻
+python _shared/scripts/advanced_templates/scripts/render_template.py --list   # 列出全部 16 个模板
+python _shared/scripts/advanced_templates/scripts/render_template.py morandi-3d-bar-heatmap --project work/scratch
 ```
 
 ## 实现要点（改数据时注意）

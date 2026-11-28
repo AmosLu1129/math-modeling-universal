@@ -9,10 +9,14 @@ r"""论文源码与编译产物一体化终审门禁（Paper Pre-Submission QA G
   4. SUMMARY-OVERFLOW 摘要页检查：MCM/ICM Summary Sheet 严格占第 1 页不溢出到第 2 页；国赛摘要与关键词在预算页内
   5. FONT-EMBED       字体嵌入：pdffonts 全嵌入核查，严禁 emb=no 或 Type 3 点阵字体
   6. FIGURE-AUDIT     插图引用：检查全部 \includegraphics / #image 文件存在性，并对嵌入的 .pdf 图运行 audit_pdf_text 字号审计
+  7. CODE-LEAK        代码腔扫描：拦截正文/表/图中未翻译为自然学术命名的 snake_case 标识与 4 位无效尾零百分比
+  8. DEPTH-CHECK      基础完整性核查：核查主文页数、编号公式与插图不低于最小可读下限（不强迫堆砌）
+  9. BIB-AUDIT        文献核查：引用键双向一致（缺失 FAIL / 未引用 WARN）与出版年份不超 --max-year（FAIL）
+ 10. STYLE-ADVISORY   柔和文风提示（仅 WARN 不阻断）：提醒内部配色/工程质检泄漏与高频 AI 副词
 
 用法：
     python paper_qa.py --paper-dir output/paper --competition mcm
-    python paper_qa.py --paper-dir output/paper --compile --clean --competition mcm --out work/paper_qa_report.md
+    python paper_qa.py --paper-dir output/paper --compile --clean --competition mcm --mode o_award --out work/paper_qa_report.md
     python paper_qa.py --self-test
 
 退出码：0 = 通过（0 FAIL，可能有 WARN）；1 = 存在 FAIL；2 = 用法或关键输入缺失错误。
@@ -198,6 +202,120 @@ def check_source_hygiene(paper_dir: Path, main_name: str | None = None) -> Check
     return CheckResult("SOURCE-HYGIENE", "PASS", f"源码卫生通过（核查 {len(targets)} 个文件，0 泄漏/占位）", [])
 
 
+def _select_source_targets(paper_dir: Path, main_name: str | None) -> tuple[list[Path], str]:
+    main_ext = Path(main_name).suffix.lower() if main_name else ""
+    tex_files = sorted(p for p in paper_dir.rglob("*.tex") if p.is_file())
+    typ_files = sorted(p for p in paper_dir.rglob("*.typ") if p.is_file())
+    if main_ext == ".typ":
+        return typ_files, "typ"
+    if main_ext == ".tex" or tex_files:
+        return tex_files, "tex"
+    if typ_files:
+        return typ_files, "typ"
+    return [], "tex"
+
+
+def _is_backmatter_source(path: Path) -> bool:
+    stem = path.stem.lower()
+    return stem in {"b_ai_report", "ai_report", "a_code", "code_appendix", "appendix_code"}
+
+
+def _strip_tex_for_code_leak(raw: str) -> str:
+    """剥离注释、代码框、LaTeX 引用/路径/宏命令与数学公式，仅保留自然散文、标题与表单元格文本。"""
+    text = re.sub(
+        r"\\begin\{(?:lstlisting|verbatim|Verbatim|minted|comment|equation\*?|align\*?|gather\*?|multline\*?)\}.*?\\end\{(?:lstlisting|verbatim|Verbatim|minted|comment|equation\*?|align\*?|gather\*?|multline\*?)\}",
+        _preserve_newlines,
+        raw,
+        flags=re.S,
+    )
+    text = re.sub(r"\\lstinline(?:\[[^\]]*\])?(?:(.)(.*?)\1|\{[^}]*\})", _preserve_newlines, text, flags=re.S)
+    text = re.sub(r"\\verb\*?(.)(.*?)\1", _preserve_newlines, text, flags=re.S)
+    text = re.sub(r"(?<!\\)%[^\n]*", "", text)
+    # Strip math blocks & inline math
+    text = re.sub(r"(?<!\\)\$\$.*?\$\$", _preserve_newlines, text, flags=re.S)
+    text = re.sub(r"(?<!\\)\$[^$\n]+\$", " ", text)
+    text = re.sub(r"\\\(.*?\\\)", _preserve_newlines, text, flags=re.S)
+    text = re.sub(r"\\\[.*?\\\]", _preserve_newlines, text, flags=re.S)
+    # Strip commands whose arguments legitimately contain underscores/filenames/keys
+    text = re.sub(
+        r"\\(?:url|path|texttt|label|ref|eqref|autoref|cref|Cref|pageref|input|include|IfFileExists|InputIfFileExists|lstinputlisting|bibliography|bibliographystyle|ResVal|ResPct|ResSmart|ResPctSmart|ResInt|ResRaw|begin|end)\b(?:\[[^\]]*\])?\{[^}]*\}",
+        _preserve_newlines,
+        text,
+    )
+    text = re.sub(r"\\(?:cite|citep|citet|includegraphics)\b(?:\[[^\]]*\])?\{[^}]*\}", _preserve_newlines, text)
+    text = re.sub(r"\\href\{[^}]*\}\{([^}]*)\}", r"\1", text)
+    text = re.sub(r"\\(?:newcommand|renewcommand|providecommand|newtcolorbox|definecolor)\b[^{\n]*\{[^}]*\}", " ", text)
+    text = re.sub(r"\\graphicspath\s*\{(?:\{[^}]+\}\s*)+\}", _preserve_newlines, text)
+    text = re.sub(r"\\(?:documentclass|usepackage)\b(?:\[[^\]]*\])?\{[^}]*\}", " ", text)
+    return text
+
+
+def detect_mode(paper_dir: Path, explicit: str = "auto") -> str:
+    if explicit and explicit != "auto":
+        return explicit.lower()
+    manifest = paper_dir.parent.parent / "work" / "run_manifest.yaml"
+    if manifest.is_file():
+        m = re.search(r"(?m)^\s*mode:\s*[\"']?([A-Za-z0-9_-]+)", _read_text(manifest))
+        if m:
+            return m.group(1).strip().lower()
+    return "competition"
+
+
+def check_code_leaks(
+    paper_dir: Path,
+    main_name: str | None = None,
+    mode: str = "competition",
+    strict: bool = False,
+) -> CheckResult:
+    """扫描正文、标题与表格中裸露的 snake_case 代码变量名及 4 位无效尾零百分比。"""
+    targets, lang = _select_source_targets(paper_dir, main_name)
+    if not targets:
+        return CheckResult("CODE-LEAK", "PASS", "未发现源码文件，跳过代码腔检查", [])
+
+    snake_re = re.compile(r"(?<![\\A-Za-z0-9])([A-Za-z][A-Za-z0-9]*(?:\\_|_)[A-Za-z0-9]+(?:(?:\\_|_)[A-Za-z0-9]+)*)")
+    pct_zero_re = re.compile(r"(?<![0-9])\d+\.\d{2}00\s*(?:\\?%)" if lang == "tex" else r"(?<![0-9])\d+\.\d{2}00\s*%")
+
+    snake_hits: list[str] = []
+    pct_hits: list[str] = []
+
+    for path in targets:
+        raw = _read_text(path)
+        if _is_generated_macro_file(raw) or _is_backmatter_source(path):
+            continue
+        rel = path.relative_to(paper_dir).as_posix()
+        if lang == "tex":
+            clean = _strip_tex_for_code_leak(raw)
+        else:
+            clean = _strip_typ_nonprose(raw)
+            clean = re.sub(r"`[^`\n]+`", " ", clean)
+            clean = re.sub(r"#(?:image|raw)\([^)]*\)", " ", clean)
+            clean = re.sub(r"\$[^$\n]+\$", " ", clean)
+
+        for lno, line in enumerate(clean.splitlines(), 1):
+            for m in snake_re.finditer(line):
+                tok = m.group(1)
+                snake_hits.append(f"{rel}:{lno}: 裸露代码标识 `{tok}`（请改用自然学术名称或数学符号）")
+            for m in pct_zero_re.finditer(line):
+                pct_hits.append(f"{rel}:{lno}: 4 位尾零百分比 `{m.group(0)}`（建议用 \\ResPctSmart 精简）")
+
+    if snake_hits:
+        lvl = "FAIL" if (mode == "o_award" or strict) else "WARN"
+        return CheckResult(
+            "CODE-LEAK",
+            lvl,
+            f"发现 {len(snake_hits)} 处疑似代码变量名泄漏" + (f"、{len(pct_hits)} 处尾零百分比" if pct_hits else ""),
+            (snake_hits + pct_hits)[:30],
+        )
+    if pct_hits:
+        return CheckResult(
+            "CODE-LEAK",
+            "WARN",
+            f"无代码变量泄漏，但发现 {len(pct_hits)} 处 4 位尾零百分比建议精简",
+            pct_hits[:20],
+        )
+    return CheckResult("CODE-LEAK", "PASS", f"0 处代码变量名泄漏与冗余尾零百分比（核查 {len(targets)} 个源文件）", [])
+
+
 def audit_compile_log(log_text: str, overfull_pt: float = 10.0, compile_rc: int | None = None) -> CheckResult:
     """解析 LaTeX .log（或编译结果），分级判定 fatal / undefined / Overfull / headheight。"""
     fails: list[str] = []
@@ -307,6 +425,30 @@ def _extract_pdf_pages_text(pdf_path: Path) -> tuple[int | None, list[str], str]
     return total_pages, pages, "missing_pdftotext"
 
 
+def _excluded_backmatter_pages(pages_text: list[str], competition: str) -> tuple[int, str]:
+    comp = competition.lower()
+    if comp in ("mcm", "icm") and pages_text:
+        for idx in range(2, len(pages_text)):  # Page 3+
+            top_lines = "\n".join([ln.strip() for ln in pages_text[idx].splitlines() if ln.strip()][:12])
+            if re.search(
+                r"(?im)^\s*(?:Appendix\s+[A-Z0-9]+\s*[:：.\-]?\s*)?(?:Report\s+on\s+Use\s+of\s+AI|AI\s+Use\s+Report)\b",
+                top_lines,
+            ):
+                ai_start = idx + 1
+                total = len(pages_text)
+                excl = total - ai_start + 1
+                return excl, f"，已自动排除第 {ai_start}–{total} 页 Report on Use of AI（{excl} 页）"
+    elif comp == "cumcm" and pages_text:
+        for idx in range(3, len(pages_text)):  # Page 4+
+            top_lines = "\n".join([ln.strip() for ln in pages_text[idx].splitlines() if ln.strip()][:10])
+            if re.search(r"^\s*(?:附录\s*[A-Z0-9一二三四]?|AI\s*使用情况说明)", top_lines):
+                appx_start = idx + 1
+                total = len(pages_text)
+                excl = total - appx_start + 1
+                return excl, f"，已排除第 {appx_start}–{total} 页附录/AI说明（{excl} 页）"
+    return 0, ""
+
+
 def check_page_limit(
     total_pages: int | None,
     pages_text: list[str],
@@ -318,33 +460,7 @@ def check_page_limit(
     if total_pages is None:
         return CheckResult("PAGE-LIMIT", "WARN", "无法获取 PDF 总页数（缺少 pdfinfo/pdftotext）", [])
 
-    comp = competition.lower()
-    excluded = 0
-    note = ""
-    if comp in ("mcm", "icm") and pages_text:
-        ai_start: int | None = None
-        for idx in range(2, len(pages_text)):  # Page 3+
-            top_lines = "\n".join([ln.strip() for ln in pages_text[idx].splitlines() if ln.strip()][:12])
-            if re.search(
-                r"(?im)^\s*(?:Appendix\s+[A-Z0-9]+\s*[:：.\-]?\s*)?(?:Report\s+on\s+Use\s+of\s+AI|AI\s+Use\s+Report)\b",
-                top_lines,
-            ):
-                ai_start = idx + 1
-                break
-        if ai_start is not None:
-            excluded = total_pages - ai_start + 1
-            note = f"，已自动排除第 {ai_start}–{total_pages} 页 Report on Use of AI（{excluded} 页）"
-    elif comp == "cumcm" and pages_text:
-        appx_start: int | None = None
-        for idx in range(3, len(pages_text)):  # Page 4+
-            top_lines = "\n".join([ln.strip() for ln in pages_text[idx].splitlines() if ln.strip()][:10])
-            if re.search(r"^\s*(?:附录\s*[A-Z0-9一二三四]?|AI\s*使用情况说明)", top_lines):
-                appx_start = idx + 1
-                break
-        if appx_start is not None:
-            excluded = total_pages - appx_start + 1
-            note = f"，已排除第 {appx_start}–{total_pages} 页附录/AI说明（{excluded} 页）"
-
+    excluded, note = _excluded_backmatter_pages(pages_text, competition)
     counted = total_pages - excluded
     if counted > max_pages:
         return CheckResult(
@@ -590,6 +706,182 @@ def check_figures(paper_dir: Path, main_name: str | None = None, min_fig_pt: flo
     )
 
 
+def check_paper_depth(
+    paper_dir: Path,
+    main_name: str | None,
+    total_pages: int | None,
+    pages_text: list[str],
+    competition: str,
+    mode: str,
+) -> CheckResult:
+    """o_award 档深度下限核查：正文页数、编号公式数量与插图数量。"""
+    if mode != "o_award":
+        return CheckResult("DEPTH-CHECK", "PASS", f"当前档位 {mode}，跳过 o_award 深度下限预警", [])
+
+    targets, lang = _select_source_targets(paper_dir, main_name)
+    eq_count = 0
+    fig_count = 0
+    for path in targets:
+        raw = _read_text(path)
+        if _is_generated_macro_file(raw) or _is_backmatter_source(path):
+            continue
+        if lang == "tex":
+            clean = re.sub(
+                r"\\begin\{(?:lstlisting|verbatim|Verbatim|minted|comment)\}.*?\\end\{(?:lstlisting|verbatim|Verbatim|minted|comment)\}",
+                _preserve_newlines,
+                raw,
+                flags=re.S,
+            )
+            clean = re.sub(r"(?<!\\)%[^\n]*", "", clean)
+            eq_count += len(re.findall(r"\\begin\{(?:equation|align|gather|multline)\}", clean))
+            fig_count += len(re.findall(r"\\includegraphics(?:\[[^\]]*\])?\{[^}]+\}", clean))
+        else:
+            clean = _strip_typ_nonprose(raw)
+            eq_count += len(re.findall(r"(?m)^\s*\$\s+[^$]+\s+\$\s*(?:<[A-Za-z0-9_:-]+>)?\s*$", clean))
+            fig_count += len(re.findall(r'#image\(\s*"[^"]+"', clean))
+
+    comp = competition.lower()
+    if comp in ("mcm", "icm"):
+        min_pages, min_eq, min_fig = 12, 4, 4
+    elif comp in ("cumcm", "huaweibei"):
+        min_pages, min_eq, min_fig = 10, 4, 4
+    else:
+        min_pages, min_eq, min_fig = 0, 4, 4
+
+    main_pages = 0
+    if total_pages is not None:
+        excl, _ = _excluded_backmatter_pages(pages_text, competition)
+        main_pages = max(0, total_pages - excl)
+
+    warns: list[str] = []
+    if min_pages > 0 and main_pages > 0 and main_pages < min_pages:
+        warns.append(f"正文页数偏短：{main_pages} 页 < 完整性下限 {min_pages} 页（确认核心分析已展开）")
+    if eq_count < min_eq:
+        warns.append(f"独立编号公式偏少：{eq_count} 个 < {min_eq} 个（建议将关键方程编号以便引用）")
+    if fig_count < min_fig:
+        warns.append(f"正文章节插图偏少：{fig_count} 张 < {min_fig} 张（确认关键机制与结果已可视化）")
+
+    summary = f"正文 {main_pages or '?'} 页 | 编号公式 {eq_count} 个 | 插图 {fig_count} 张"
+    if warns:
+        return CheckResult("DEPTH-CHECK", "WARN", f"完整性检查提示（{summary}）", warns)
+    return CheckResult("DEPTH-CHECK", "PASS", f"完整性达标（{summary}）", [])
+
+
+def check_bibliography(paper_dir: Path, main_name: str | None = None, max_year: int | None = None) -> CheckResult:
+    """客观文献审计：引用键双向一致（缺失 FAIL / 未引用 WARN）与年份上限（> max_year FAIL）。"""
+    targets, lang = _select_source_targets(paper_dir, main_name)
+    if lang != "tex" or not targets:
+        return CheckResult("BIB-AUDIT", "PASS", "非 LaTeX 源码，跳过文献引用审计", [])
+
+    cited_keys: set[str] = set()
+    defined_entries: list[tuple[str, str, str]] = []  # (key, rel_file, raw_body)
+    inferred_year: int | None = max_year
+
+    for path in targets:
+        raw = _read_text(path)
+        if _is_generated_macro_file(raw):
+            continue
+        rel = path.relative_to(paper_dir).as_posix()
+        clean = re.sub(
+            r"\\begin\{(?:lstlisting|verbatim|Verbatim|minted|comment)\}.*?\\end\{(?:lstlisting|verbatim|Verbatim|minted|comment)\}",
+            _preserve_newlines,
+            raw,
+            flags=re.S,
+        )
+        clean = re.sub(r"(?<!\\)%[^\n]*", "", clean)
+
+        if inferred_year is None:
+            m_yr = re.search(r"\\(?:newcommand|renewcommand)\{\\MCMYear\}\{\s*(20\d{2})\s*\}", clean)
+            if m_yr:
+                inferred_year = int(m_yr.group(1))
+
+        for m in re.finditer(r"\\cite[a-zA-Z*]*\s*(?:\[[^\]]*\]\s*)*\{([^}]+)\}", clean):
+            for k in m.group(1).split(","):
+                kk = k.strip()
+                if kk:
+                    cited_keys.add(kk)
+
+        bib_matches = list(re.finditer(r"\\bibitem(?:\[[^\]]*\])?\{([^}]+)\}", clean))
+        for idx, bm in enumerate(bib_matches):
+            key = bm.group(1).strip()
+            start = bm.end()
+            end = bib_matches[idx + 1].start() if idx + 1 < len(bib_matches) else len(clean)
+            body = clean[start:end]
+            m_endbib = re.search(r"\\end\{thebibliography\}", body)
+            if m_endbib:
+                body = body[: m_endbib.start()]
+            defined_entries.append((key, rel, body))
+
+    # Also support external .bib files inside paper_dir
+    for bibp in sorted(p for p in paper_dir.rglob("*.bib") if p.is_file()):
+        btxt = _read_text(bibp)
+        rel = bibp.relative_to(paper_dir).as_posix()
+        b_matches = list(re.finditer(r"@\w+\s*\{\s*([^,\s]+)\s*,", btxt))
+        for idx, bm in enumerate(b_matches):
+            key = bm.group(1).strip()
+            start = bm.end()
+            end = b_matches[idx + 1].start() if idx + 1 < len(b_matches) else len(btxt)
+            defined_entries.append((key, rel, btxt[start:end]))
+
+    defined_keys = {k for k, _, _ in defined_entries}
+    if not cited_keys and not defined_keys:
+        return CheckResult("BIB-AUDIT", "PASS", "未检测到显式文献引用（跳过文献审计）", [])
+
+    fails: list[str] = []
+    warns: list[str] = []
+    missing = sorted(cited_keys - defined_keys)
+    unused = sorted(defined_keys - cited_keys)
+    if missing:
+        fails.append(f"存在 {len(missing)} 个未定义的引用键: {', '.join(missing)}")
+    if unused:
+        warns.append(f"存在 {len(unused)} 个未在正文引用的文献条目: {', '.join(unused)}")
+
+    if inferred_year is not None:
+        for key, rel, body in defined_entries:
+            no_urls = re.sub(r"\\url\{[^}]*\}|\\href\{[^}]*\}|https?://\S+", " ", body)
+            years = [int(y) for y in re.findall(r"\b(20\d{2})\b", no_urls)]
+            future = [y for y in years if y > inferred_year]
+            if future:
+                fails.append(f"{rel}: `{key}` 含超赛题年份 {max(future)} > {inferred_year}")
+
+    if fails:
+        return CheckResult("BIB-AUDIT", "FAIL", f"文献审计未通过（缺失={len(missing)}, 未引={len(unused)}）", fails + warns)
+    if warns:
+        return CheckResult("BIB-AUDIT", "WARN", f"文献引用完整（{len(cited_keys)} 项），存在未引用条目", warns)
+    yr_note = f"，年份 <= {inferred_year}" if inferred_year is not None else ""
+    return CheckResult("BIB-AUDIT", "PASS", f"文献双向一致（{len(cited_keys)} 引 / {len(defined_keys)} 条目，0 缺失 / 0 未引{yr_note}）", [])
+
+
+def check_style_advisory(paper_dir: Path, main_name: str | None = None) -> CheckResult:
+    """柔和提示（仅 WARN 不阻断）：检测内部工程/配色词汇泄漏及部分模板 AI 副词。"""
+    targets, lang = _select_source_targets(paper_dir, main_name)
+    if not targets:
+        return CheckResult("STYLE-ADVISORY", "PASS", "未发现源码文件，跳过文风提示", [])
+
+    eng_re = re.compile(
+        r"\b(Morandi|terracotta|Code-to-Academic|Safety\s+Standards|HTML\s+Composite|machine\s+precision|\d+\s*DPI)\b",
+        re.I,
+    )
+    adverb_re = re.compile(r"\b(crucially|seamlessly|cleanly|fundamentally|remarkably|demonstrably|fatally\s+flawed)\b", re.I)
+
+    warns: list[str] = []
+    for path in targets:
+        raw = _read_text(path)
+        if _is_generated_macro_file(raw) or _is_backmatter_source(path):
+            continue
+        rel = path.relative_to(paper_dir).as_posix()
+        clean = _strip_tex_for_code_leak(raw) if lang == "tex" else _strip_typ_nonprose(raw)
+        for lno, line in enumerate(clean.splitlines(), 1):
+            for m in eng_re.finditer(line):
+                warns.append(f"{rel}:{lno}: 内部工程/配色词 `{m.group(0)}` 建议改为纯学术表述")
+            for m in adverb_re.finditer(line):
+                warns.append(f"{rel}:{lno}: 高频模板副词/绝对词 `{m.group(0)}` 建议精简或用具体数字替代")
+
+    if warns:
+        return CheckResult("STYLE-ADVISORY", "WARN", f"发现 {len(warns)} 处文风/工程词提示（仅作建议，不阻断）", warns[:20])
+    return CheckResult("STYLE-ADVISORY", "PASS", "未发现明显工程/配色/模板副词残留", [])
+
+
 def detect_competition(paper_dir: Path, pages_text: list[str], explicit: str) -> str:
     if explicit != "auto":
         return explicit.lower()
@@ -688,18 +980,30 @@ def run_qa(
     main_name: str = "",
     pdf_path_arg: str = "",
     competition: str = "auto",
+    mode: str = "auto",
+    strict_code_leak: bool = False,
     max_pages: int | None = None,
     summary_max_pages: int | None = None,
     overfull_pt: float = 10.0,
     min_fig_pt: float = 5.0,
+    max_year: int | None = None,
     compile_pdf: bool = False,
     clean: bool = False,
 ) -> dict[str, Any]:
     main_path, pdf_path = resolve_main_and_pdf(paper_dir, main_name, pdf_path_arg)
+    eff_mode = detect_mode(paper_dir, mode)
     checks: list[CheckResult] = []
 
-    # 1. SOURCE-HYGIENE
+    # 1. SOURCE-HYGIENE & CODE-LEAK
     checks.append(check_source_hygiene(paper_dir, main_path.name if main_path else None))
+    checks.append(
+        check_code_leaks(
+            paper_dir,
+            main_path.name if main_path else None,
+            mode=eff_mode,
+            strict=strict_code_leak,
+        )
+    )
 
     # 2. COMPILE-LOG
     if compile_pdf:
@@ -719,8 +1023,14 @@ def run_qa(
                     )
                 )
             compiled_pdf = paper_dir / f"{main_path.stem}.pdf"
-            if compiled_pdf.is_file() and (not pdf_path or not pdf_path.exists()):
-                pdf_path = compiled_pdf
+            if compiled_pdf.is_file():
+                if compiled_pdf.name != "paper.pdf":
+                    try:
+                        shutil.copy2(compiled_pdf, paper_dir / "paper.pdf")
+                    except OSError:
+                        pass
+                if not pdf_path_arg:
+                    pdf_path = paper_dir / "paper.pdf" if (paper_dir / "paper.pdf").is_file() else compiled_pdf
     else:
         log_file = (paper_dir / f"{main_path.stem}.log") if main_path else (paper_dir / "main.log")
         if log_file.is_file():
@@ -731,6 +1041,9 @@ def run_qa(
             checks.append(CheckResult("COMPILE-LOG", "PASS", "非 LaTeX 源码或未提供 .log，跳过日志扫描", []))
 
     # 3-5. PDF checks
+    total_pages: int | None = None
+    pages_text: list[str] = []
+    comp = competition.lower() if competition != "auto" else "mcm"
     if pdf_path is None or not pdf_path.is_file():
         checks.append(CheckResult("PAGE-LIMIT", "FAIL", f"未找到输出 PDF: {pdf_path}", []))
         checks.append(CheckResult("SUMMARY-OVERFLOW", "FAIL", f"未找到输出 PDF: {pdf_path}", []))
@@ -748,11 +1061,26 @@ def run_qa(
     # 6. FIGURE-AUDIT
     checks.append(check_figures(paper_dir, main_path.name if main_path else None, min_fig_pt=min_fig_pt))
 
+    # 7. DEPTH-CHECK, BIB-AUDIT & STYLE-ADVISORY
+    checks.append(
+        check_paper_depth(
+            paper_dir,
+            main_path.name if main_path else None,
+            total_pages=total_pages,
+            pages_text=pages_text,
+            competition=comp,
+            mode=eff_mode,
+        )
+    )
+    checks.append(check_bibliography(paper_dir, main_path.name if main_path else None, max_year=max_year))
+    checks.append(check_style_advisory(paper_dir, main_path.name if main_path else None))
+
     counts = {lvl: sum(1 for c in checks if c.level == lvl) for lvl in ("PASS", "WARN", "FAIL")}
     return {
         "paper_dir": str(paper_dir),
         "main": str(main_path) if main_path else None,
         "pdf": str(pdf_path) if pdf_path else None,
+        "mode": eff_mode,
         "counts": counts,
         "ready": counts["FAIL"] == 0,
         "checks": [asdict(c) for c in checks],
@@ -868,6 +1196,70 @@ def self_test() -> int:
         pages28 = [f"Body p{i}" for i in range(1, 27)] + ["Report on Use of AI\nTool list...", "Section 2..."]
         assert check_page_limit(28, pages28, "mcm", 25).level == "FAIL"
 
+        # 5b. CODE-LEAK & DEPTH-CHECK (v4.2)
+        leak_dir = root / "leak_test"
+        leak_dir.mkdir()
+        (leak_dir / "main.tex").write_text(
+            "Under S1\\_standby, the metric avg\\_judge\\_z reaches 58.1000\\%.\n"
+            "Clean code ref \\texttt{solve\\_q1.py}, macro \\ResVal{Q1.delta_coef}, and math $V_{\\text{cut}}$.\n",
+            encoding="utf-8",
+        )
+        r_leak_warn = check_code_leaks(leak_dir, "main.tex", mode="competition", strict=False)
+        assert r_leak_warn.level == "WARN" and len(r_leak_warn.details) == 3, r_leak_warn
+        r_leak_fail = check_code_leaks(leak_dir, "main.tex", mode="o_award", strict=False)
+        assert r_leak_fail.level == "FAIL" and len(r_leak_fail.details) == 3, r_leak_fail
+
+        (leak_dir / "main.tex").write_text(
+            "Under 4G Standby, the average judge score $\\bar{z}^J_i$ reaches 58.1\\%.\n"
+            "Appendix script \\texttt{solve\\_q1.py} and $V_{\\text{cut}}$ remain clean.\n",
+            encoding="utf-8",
+        )
+        assert check_code_leaks(leak_dir, "main.tex", mode="o_award").level == "PASS"
+
+        # Depth checks (relaxed completeness floor: 12p/4eq/4fig for MCM)
+        assert check_paper_depth(leak_dir, "main.tex", 10, [f"p{i}" for i in range(10)], "mcm", "competition").level == "PASS"
+        r_depth_warn = check_paper_depth(leak_dir, "main.tex", 8, [f"p{i}" for i in range(8)], "mcm", "o_award")
+        assert r_depth_warn.level == "WARN" and len(r_depth_warn.details) == 3, r_depth_warn
+
+        deep_tex = ["\\documentclass{article}\\begin{document}"]
+        for i in range(4):
+            deep_tex.append(f"\\begin{{equation}}x_{i}={i}\\end{{equation}}")
+        for i in range(4):
+            deep_tex.append(f"\\includegraphics{{fig{i}.png}}")
+        deep_tex.append("\\end{document}")
+        (leak_dir / "main.tex").write_text("\n".join(deep_tex), encoding="utf-8")
+        r_depth_ok = check_paper_depth(leak_dir, "main.tex", 15, [f"p{i}" for i in range(15)], "mcm", "o_award")
+        assert r_depth_ok.level == "PASS", r_depth_ok
+
+        # 5c. BIB-AUDIT & STYLE-ADVISORY
+        bib_dir = root / "bib_test"
+        bib_dir.mkdir()
+        (bib_dir / "main.tex").write_text(
+            "\\newcommand{\\MCMYear}{2024}\n"
+            "Strictly convex and exact solution \\cite{RefA,RefBad}.\n"
+            "This crucially uses Morandi palette words.\n"
+            "\\begin{thebibliography}{2}\n"
+            "\\bibitem{RefA} Author A, 2023. \\url{https://doi.org/10.1000/2026.01}\n"
+            "\\bibitem{RefUnused} Author B, 2025.\n"
+            "\\end{thebibliography}\n",
+            encoding="utf-8",
+        )
+        r_bib_bad = check_bibliography(bib_dir, "main.tex")
+        assert r_bib_bad.level == "FAIL" and "RefBad" in " ".join(r_bib_bad.details) and "2025" in " ".join(r_bib_bad.details), r_bib_bad
+        r_style = check_style_advisory(bib_dir, "main.tex")
+        assert r_style.level == "WARN" and len(r_style.details) == 2, r_style  # Morandi + crucially; ignores strictly/exact
+
+        (bib_dir / "main.tex").write_text(
+            "\\newcommand{\\MCMYear}{2024}\n"
+            "Strictly convex and exact solution \\cite{RefA}.\n"
+            "\\begin{thebibliography}{1}\n"
+            "\\bibitem{RefA} Author A, 2023. \\url{https://doi.org/10.1000/2026.01}\n"
+            "\\end{thebibliography}\n",
+            encoding="utf-8",
+        )
+        assert check_bibliography(bib_dir, "main.tex").level == "PASS"
+        assert check_style_advisory(bib_dir, "main.tex").level == "PASS"
+
         # 6. Live xelatex --compile --clean E2E check when available
         if shutil.which("xelatex"):
             e2e = root / "e2e"
@@ -892,8 +1284,8 @@ Used AI tools for proofreading.
                 encoding="utf-8",
             )
             rep = run_qa(e2e, main_name="main.tex", competition="mcm", compile_pdf=True, clean=True)
-            assert rep["ready"], rep
-            print("[SELF-TEST] PASS 6/6 (including live xelatex --compile --clean E2E)")
+            assert rep["ready"] and (e2e / "paper.pdf").is_file(), rep
+            print("[SELF-TEST] PASS 7/7 (including live xelatex --compile --clean E2E & paper.pdf auto-sync)")
         else:
             print("[SELF-TEST] PASS 5/5 + unit checks (xelatex not installed)")
     return 0
@@ -908,10 +1300,18 @@ def main() -> int:
     ap.add_argument("--main", default="", help="主源码文件名（自动探测 main.tex / main.typ）")
     ap.add_argument("--pdf", default="", help="已编译 PDF 路径（默认 paper.pdf 或 <main>.pdf）")
     ap.add_argument("--competition", default="auto", choices=("auto", "mcm", "icm", "cumcm", "huaweibei", "custom"))
+    ap.add_argument(
+        "--mode",
+        default="auto",
+        choices=("auto", "competition", "o_award", "high_assurance", "testbed"),
+        help="运行档位（auto 自动读取 work/run_manifest.yaml；o_award 启用 strict CODE-LEAK 与 DEPTH-CHECK）",
+    )
+    ap.add_argument("--strict-code-leak", action="store_true", help="强制将正文代码变量名泄漏判为 FAIL")
     ap.add_argument("--max-pages", type=int, default=None, help="覆盖页数上限（0 表示不限）")
     ap.add_argument("--summary-max-pages", type=int, default=None, help="覆盖摘要最大页数（0 表示跳过）")
     ap.add_argument("--overfull-pt", type=float, default=10.0, help="Overfull \\hbox FAIL 阈值 pt（默认 10.0）")
     ap.add_argument("--min-fig-pt", type=float, default=5.0, help="PDF 插图最小字号阈值 pt（默认 5.0）")
+    ap.add_argument("--max-year", type=int, default=None, help="参考文献允许最大出版年份（默认从 \\MCMYear 推断）")
     ap.add_argument("--compile", action="store_true", help="检查前先执行干净双编译（xelatex / typst）")
     ap.add_argument("--clean", action="store_true", help="配合 --compile 清理旧辅助文件后再编译")
     ap.add_argument("--out", default="", help="可选：输出 Markdown 报告路径")
@@ -929,10 +1329,13 @@ def main() -> int:
         main_name=args.main,
         pdf_path_arg=args.pdf,
         competition=args.competition,
+        mode=args.mode,
+        strict_code_leak=args.strict_code_leak,
         max_pages=args.max_pages,
         summary_max_pages=args.summary_max_pages,
         overfull_pt=args.overfull_pt,
         min_fig_pt=args.min_fig_pt,
+        max_year=args.max_year,
         compile_pdf=args.compile,
         clean=args.clean,
     )

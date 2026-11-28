@@ -1,4 +1,4 @@
-# Math Modeling Universal Skills (`v4.1`)
+# Math Modeling Universal Skills (`v4.2`)
 
 跨 Agent、遵循 [Agent Skills 开放标准](https://agentskills.io) 的数学建模竞赛全流程技能包（11 个模块化 Skill + 共享工具链 `_shared/`）。一次安装，在 **Claude Code、OpenAI Codex、OpenCode、DeepSeek Harness (`dsh`)、Qoder / Qoder CN、Trae CN、Cursor、Windsurf、Gemini CLI 与 Antigravity** 中全局直接调用。
 
@@ -8,17 +8,22 @@
 
 | 技能目录 (`name`) | 阶段 | 核心能力与内置门禁 |
 |---|---|---|
-| `math-modeling-workflow` | 全流程编排 | 按题型裁剪阶段、DAG 状态追踪 (`manifest_cli.py`)、P1/P2 人工确认门禁 |
-| `math-problem-analysis` | S1 审题拆题 | 隐藏文本/零宽字符/白底小字防 AI 误导审计 (`problem_integrity_check.py`)、双通道视觉对照 |
+| `math-modeling-workflow` | 全流程编排 | 按题型裁剪阶段、DAG 状态追踪 (`manifest_cli.py` + `mark-current --all`)、P1/P2 人工确认门禁 |
+| `math-problem-analysis` | S1 审题拆题 | 隐藏文本/零宽字符/白底小字防 AI 误导审计 (`problem_integrity_check.py`)、核心矛盾提炼与动词/答案形态核对表 |
 | `math-data-prep` | S2 数据清洗 | `.mat` / `.xlsx` / `.csv` 清洗、无附件参数字典与量级预检 |
 | `math-literature-review` | S3 文献综述 | Crossref / OpenAlex / arXiv / CNKI 调研与 DOI 真实性活体校验 (`verify_references.py`) |
-| `math-model-design` | S4 模型设计 | 奥卡姆剃刀基线升级、第一性原理/非冗余/非循环留出审计与 Pareto 范式锁定 (`check_formulation.py --phase p1`) |
-| `math-model-solver` | S5 编程求解 | 闭式校验 + 非构造性 OOS 基线、独立约束检查、统一后验集合与 `key_metrics` 契约 (`--phase p3`) |
-| `math-model-validation` | S6 验证定稿 | 极限退化、离散度-相关性 2D 相变扫描、严格内点与跨节零漂移验证 (`--phase all`) |
-| `math-figures` | S7 出版图表 | 11 套高级模板、静态预检 (`validate_figure_src.py`)、`layout_qa`、`figure_qa`、`audit_pdf_text`、拼图复核 |
-| `math-paper-writing` | S8 论文写作 | 14 中 + 3 英竞赛模板、`export_paper_macros.py` 单源绑定（`\ResVal`/`\ResPct` + TeX 宽表/公式防误转义） |
-| `math-paper-humanize` | S9 人工化润色 | 中英双通道去套话、改写不变量校验 (`invariance_check.py`)、竞赛级 AI 使用披露 |
-| `math-paper-review` | S10 终审打包 | 红队审查、`paper_qa.py`（页数/Overfull/`\%`&`\&` 源码拦截）、4 边触边检测 (`render_check.py`)、`consistency_check.py` 与提交包 |
+| `math-model-design` | S4 模型设计 | 无模板自由发散沙盒、奥卡姆剃刀基线升级、4 轴编码前反误导审计与 3 级假设溯源 (`check_formulation.py --phase p1`) |
+| `math-model-solver` | S5 编程求解 | 模块化分阶段缓存 (`stage_cache.py`)、闭式校验 + 非构造性 OOS 基线、独立约束检查与 `key_metrics` 契约 (`--phase p3`) |
+| `math-model-validation` | S6 验证定稿 | 极限退化、同表 CRN 敏感性（含「所以呢」判据）、有效数字一致、适用边界与独立 `Model Weaknesses` 剖析 (`--phase all`) |
+| `math-figures` | S7 出版图表 | **16 套**高级模板（含 3D 柱面/山脊/哑铃/桑基）、去背与 HTML/SVG `{{key}}` 动态数据绑定 (`render_html_figure.py --results`)、`layout_qa`、`figure_qa access` |
+| `math-paper-writing` | S8 论文写作 | 14 中 + 3 英竞赛模板（含 `algorithm`/`tcolorbox`）、`export_paper_macros.py --format-mode smart`（`Decimal` `ROUND_HALF_UP` 智能有效数字） |
+| `math-paper-humanize` | S9 人工化润色 | 摘要平实首段（禁晦涩下标与 AI 副词套话）、真实迭代取舍叙事、改写不变量校验 (`invariance_check.py`)、竞赛级 AI 使用披露 |
+| `math-paper-review` | S10 终审打包 | 4 路并发语义红队审计、`paper_qa.py`（`BIB-AUDIT` 文献年份/键审计 + 非阻塞 `STYLE-ADVISORY` + `--compile` 同步 `paper.pdf`）、`pack_submission.py` 洁净室白名单提交包 |
+
+### `v4.2` 冲 O 奖全套增强要点
+- **保独创性的发散×实证建模与轻量机械门禁（S1–S6）**：支持 `--mode o_award`（兼顾创作自由度与 `v4.1` 客观门禁保底）；S1 引入一句话核心矛盾、题面动词与答案形态核对；S4 新增**无模板自由发散沙盒（先想透、后形式化）**、4 轴编码前自查、奥卡姆剃刀剪枝与 3 级假设溯源表；`check_formulation.py` 放宽自然中英文表达识别，绝不用僵化八股正则扼杀原创结构；S5 新增可选模块化求解缓存 `_shared/scripts/stage_cache.py`（按参数/输入/代码 SHA-256 自动失效，支持 `MM_FORCE_RECOMPUTE=1` 冷启动校验）；S6 新增 2–3 位有效数字一致性、同表 CRN 消融/灵敏度规则，以及独立的 **Model Weaknesses（模型自身弱点）** 披露。
+- **统计图升级、3D 渲染与 HTML `{{key}}` 动态数据注入（S7）**：`plot_style.py` 新增 `morandi_journal` / `morandi_cool` / `morandi_pastel` 主题与 6 项微排版规则；新增 5 套高阶统计图模板（共 16 套，并钳位 `make_morandi_3d_surface_proj.py` 非负 `z_floor`、移除模板内部配色词）；`asset_cutout.py` + `render_html_figure.py` 支持「3D 资产 + HTML/SVG + 数学公式」双层总装，并新增 `--results results.json` 对 `{{key}}` / `{{key:.2f}}` / `{{key:pct1}}` 占位符进行 `ROUND_HALF_UP` 动态注入与纯学术默认页脚。
+- **客观文献与排版审计、高精度宏、四路红队与洁净室打包（S0/S8–S10）**：`export_paper_macros.py` 修复百分比浮点精度并全面采用 `Decimal` `ROUND_HALF_UP`；`paper_qa.py` 新增 `BIB-AUDIT`（引用未定义 `FAIL`、时间穿越年份 `FAIL`）、非阻塞 `STYLE-ADVISORY`（提醒清理内部配色/QA 词及 AI 高频副词而不阻塞正文）、`--compile` 自动同步 `paper.pdf` 并放宽 `DEPTH-CHECK` 篇幅下限；`manifest_cli.py mark-current --all` 支持拓扑单趟刷新；S10 支持**4 路独立红队子代理语义审计**及 `_shared/scripts/pack_submission.py` 洁净室白名单打包与 `SHA256SUMS.txt` 校验。
 
 ### `v4.1` 更新要点（2026 MCM C 深度评审闭环沉淀）
 - **模型设计与归因防线（S4）**：强制检查标准化/排序前的**代数抵消参数**（如 $z(\gamma \ln v) \equiv z(\ln v)$ 改用 Box-Cox $\lambda$）；禁止把争议案例写进硬约束制造假 100%，强制划分 **Train/Holdout** 留出集；反演隐变量回归必须配**无反演直接观测通道**、BH-FDR $q$ 值及 $n<10$ 低功效标记。

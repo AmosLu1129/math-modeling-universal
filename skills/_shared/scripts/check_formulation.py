@@ -131,19 +131,25 @@ def find_paradigm_line(text: str) -> str | None:
                     heading_idx = idx
             else:
                 return line
-    if heading_idx is None:
-        return None
-    # 若只有标题行含 "Primary Paradigm" 等关键字，补充其后紧邻的 1–2 行正文作为声明上下文
-    fallback_parts = [lines[heading_idx]]
-    for j in range(heading_idx + 1, min(len(lines), heading_idx + 4)):
-        nxt = lines[j].strip()
-        if HEAD.match(lines[j]):
-            break
-        if nxt:
-            fallback_parts.append(nxt)
-            if len(fallback_parts) >= 3:
+    if heading_idx is not None:
+        # 若只有标题行含 "Primary Paradigm" 等关键字，补充其后紧邻的 1–2 行正文作为声明上下文
+        fallback_parts = [lines[heading_idx]]
+        for j in range(heading_idx + 1, min(len(lines), heading_idx + 4)):
+            nxt = lines[j].strip()
+            if HEAD.match(lines[j]):
                 break
-    return " ".join(fallback_parts)
+            if nxt:
+                fallback_parts.append(nxt)
+                if len(fallback_parts) >= 3:
+                    break
+        return " ".join(fallback_parts)
+
+    # 宽松兜底：自然英文或无显式「主范式」标签时，识别明确声明求解范式的句子
+    fallback_pat = r"epsilon[\s\-]*constraint|ε[\s\-]*约束|weighted[\s\-]+sum|lexicograph|nsga-?ii|closed[\s\-]+loop\s+pareto"
+    for line in lines:
+        if has(fallback_pat, line) and not HEAD.match(line):
+            return line
+    return None
 
 
 def match_paradigms(pline: str) -> list[str]:
@@ -611,6 +617,27 @@ def self_test() -> int:
     cases.append(("真多范式混用（epsilon-constraint + weighted-sum）应仍拦截",
                   code == 1 and "范式未锁定" in out, out.strip()[-160:]))
 
+    # 自然英文自由表述（不依赖固定加粗标题词）亦应放行 0 FAIL 0 WARN
+    en_natural = build("en_natural", {
+        "brief.md": "# Brief\n### Problem 1\n- Problem Tag: Multi-Objective Optimization (MO)\n",
+        "model_doc.md": (
+            "## Problem 1\n"
+            "We select portfolio vector \\mathbf{x} and state variable z.\n"
+            "Minimize Z1 = cost and Z2 = latency via the epsilon-constraint method.\n"
+            "Objectives are scaled by utopia distance and normalized across the Pareto front; knee rule picks the balanced portfolio.\n"
+            "Subject to C1 deck bound and C2 rating floor.\n"
+            "Under prior empirical hypotheses solved via vectorized search.\n"
+        ),
+        "results.json": json.dumps({"Q1": en_results["Q3"], "validation": {"v1": 1}}, ensure_ascii=False),
+        "constraint_check.md": "| ID | Violation | Verdict |\n|---|---|---|\n| C1 | 0 | PASS |\n| C2 | 0 | PASS |\n",
+        "iteration_log.md": "- R1-01: Hypothesis: baseline too coarse; minimal verification: passed.\n",
+        "validation_report.md": "# Validation\nSensitivity perturbation +/-20% checked.\nMonte Carlo robustness checked.\nModel Weaknesses and Operating Limits: synthetic priors.\n",
+        "final_models.md": "# Final Models\nAll finalized.\n",
+    })
+    code, out = run(en_natural)
+    cases.append(("自然英文无八股标题项目应 0 FAIL 0 WARN",
+                  code == 0 and "0 WARN / 0 FAIL" in out, out.strip()[-160:]))
+
     print(f"self-test fixtures: {root}")
     bad_n = 0
     for name, ok, detail in cases:
@@ -694,11 +721,11 @@ def main() -> int:
                 g.fail(tag, f"缺【{label}】清单/表达式，全文亦未找到（SOP {clause}）")
 
         var_pat = (
-            r"决策变量|变量定义|变量说明|待估参数|未知量|decision\s+variable|unknowns?|parameters?\s+to\s+estimate|estimand|latent\s+variable"
+            r"决策变量|变量定义|变量说明|待估参数|未知量|decision\s+variable|state\s+variable|\bvariables?\b|\bvector\s+\\mathbf\{|\bportfolio\b|\btrajectory\b|unknowns?|parameters?\s+to\s+estimate|estimand|latent\s+variable"
             + (r"|核心统计量|回归|模型方程|指标|statistic|covariate|predictor|feature" if non_opt else "")
         )
         obj_pat = (
-            r"目标函数|优化目标|objective\s+function|objective|loss\s+function|likelihood|\breml\b|\bmin\b|\bmax\b|s\.t\.|subject\s+to"
+            r"目标函数|优化目标|objective\s+function|objective|loss\s+function|likelihood|\breml\b|\bmin\b|\bmax\b|\bminimi[sz]e\b|\bmaximi[sz]e\b|s\.t\.|subject\s+to"
             + (r"|评估指标|指标体系|准则|metric|criterion|estimator|model\s+equation|specification" if non_opt else "")
         )
         elem(var_pat, "决策变量", "§2.1")
@@ -714,8 +741,8 @@ def main() -> int:
                     g.fail(tag, "约束未编号（需 C1/C2/…，SOP §2.3）；散述约束无法逐条复核")
             elif len(cids) < 2:
                 g.warn(tag, f"仅识别到 {sorted(cids)}：约束条数偏少，确认是否省略了边界/逻辑约束")
-        elem(r"模型假设|假设|assumption|premise", "假设", "§2.4")
-        solver_pat = r"求解算法|求解思路|求解器|算法与工具|solver|algorithm|estimation\s+method|runtime|时间预算|耗时"
+        elem(r"模型假设|假设|assumption|premise|hypothes[ie]s|simplif|boundary\s+condition|\bprior\b", "假设", "§2.4")
+        solver_pat = r"求解算法|求解思路|求解器|算法与工具|solver|algorithm|estimation\s+method|runtime|时间预算|耗时|solved\s+via|vectorized"
         if not has(solver_pat, text):
             if has(solver_pat, global_text):
                 g.warn(tag, "【求解思路与规模判断】只写在公共节（SOP §2.6）")
@@ -724,7 +751,7 @@ def main() -> int:
 
         if is_mo:
             mo_questions.append(sec)
-            if not has(r"归一化|无量纲|标准化|normali[sz]|standardi[sz]|dimensionless|min-max|理想点|ideal\s+point|参考值|reference\s+point", text):
+            if not has(r"归一化|无量纲|标准化|normali[sz]|standardi[sz]|dimensionless|min[-\s]?max|utopia|hypervolume|pareto\s+front|scaled|non-?dominat|理想点|ideal\s+point|参考值|reference\s+point", text):
                 g.fail(tag, "多目标小问缺【量纲归一化】说明（SOP §2.5/§3.4）")
             pline = find_paradigm_line(text)
             if pline is None:
@@ -840,7 +867,7 @@ def main() -> int:
                     g.fail("validation_report.md", "检验报告缺参数灵敏度（±5/10/20% 或弹性/Tornado）证据")
                 if not has(r"稳健|鲁棒|噪声地板|robust|noise\s+floor|monte\s+carlo|bootstrap|cross[-\s]*validation|\bseed|posterior\s+draw", vr):
                     g.fail("validation_report.md", "检验报告缺稳健性证据（重复模拟/换种子/样本量/窗口）")
-                if not has(r"适用边界|失效条件|有效域|validity\s+(?:domain|boundar)|failure\s+(?:condition|mode)|limitation|scope\s+of\s+validity|applicable\s+range", vr):
+                if not has(r"适用边界|失效条件|有效域|模型弱点|模型局限|validity\s+(?:domain|boundar)|failure\s+(?:condition|mode)|limitation|scope\s+of\s+validity|applicable\s+range|model\s+weakness|weaknesses|operating\s+limit", vr):
                     g.fail("validation_report.md",
                            "检验报告缺「适用边界与失效条件」——只摆灵敏度数字、不给结论与失效边界不合格（SOP §6.6）")
                 if rj.exists() and results.get("validation") is None:

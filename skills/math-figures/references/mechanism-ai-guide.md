@@ -1,14 +1,44 @@
-# AI 基底图 + SVG 标注（机理/原理示意图，可选项，2026-08-12 收编）
+# AI 视觉资产 + 矢量总装配双层机理图指南（形态 A & 形态 B，v4.2）
 
-> 定位：当用户确认本次要用「AI 画原理图」时走本流程。**默认仍是纯 SVG 手绘**（见 `math-figures/SKILL.md` 机理示意图首选路线）；本方案只在用户选择后启用。
+> 定位：解决“纯手写 SVG 缺写实工业/物理质感、纯生图工具无法控制精确数学公式与字母”的双重矛盾。**常规纯逻辑框图仍可用纯 HTML/SVG+Math 或 `matplotlib`；涉及物理设备、地形/古建筑、生物组织等实体视觉组件时，优先走下方双层管线。**
 
-## 一、什么时候建议用（决策规则）
+## 一、双模态架构选择与预算
 
-- 建议用：生物/医学**有机形态**（细胞、组织、信号通路）、需要"期刊图形摘要"质感、评审反馈"图太简陋"。
-- 不建议用：几何可定义的结构（流程框图、电池剖面、房室模型、合成路线）——纯 SVG 已够且更可控。
-- 铁律：**图字分离**——AI 只生成无文字基底图，中文标注一律用 SVG 叠加；AI 图里依赖生成文字 = 必然乱码。
+- **形态 A（首选，复杂架构 / 设备机理双层总装）**：只外包生成 **2–4 个独立写实 3D 组件**（纯白底 + 零文字），经 `asset_cutout.py` 边界泛洪去背裁剪出透明 RGBA PNG 后，交由 `render_html_figure.py` 将 **HTML CSS 网格卡片 + 语义 SVG 贝塞尔箭头 + 印刷级数学公式 + 去背 3D 组件** 确定性合成为 300 DPI PNG 与矢量 PDF。
+  - **组件生成预算控制**：全篇论文建议 **1–2 张核心枢纽图**采用外包 3D 组件总装；其余流程图与模型框图直接使用纯 HTML+SVG+Math 模板，避免视觉风格飘移或生图耗时过长。
+- **形态 B（连续空间不可拆场景）**：适用于流场、热传导切片、微观组织交互等连续背景，生成无文字低饱和基底图后，用原生视觉测出安全区相对坐标，再叠 SVG 编号胶囊与引线并过 `svg_audit.py`。
 
-## 二、工作流总览
+### 形态 A 标准工具链与 Nano Banana 人工外包接力模板
+
+1. **生成起手画布**（零外包资产也可直接画出顶刊卡片架构图）：
+   ```bash
+   python _shared/scripts/render_html_figure.py --init-template work/figures/fig_arch.html
+   ```
+2. **如需人工在 Nano Banana 生成独立 3D 视觉组件**（严格不自行乱改，按 `work/human_requests/req_XX.md` 提交工单并自带纯 SVG Fallback）：
+   可直接复制下方英文结构化 Prompt（修改方括号主题即可）：
+   ```text
+   Isolated semi-realistic 3D isometric scientific render of [OBJECT: e.g., cross-section of a smartphone lithium-ion battery pack / weathered sandstone church stair tread], clean pure white solid background (#FFFFFF), soft studio key light from upper-left 45 degrees, subtle neutral soft contact shadow underneath only. Palette constrained strictly to muted Morandi scientific tones: slate steel blue (#4E6E8E), muted terracotta (#C86D5B), sage green (#6D9A87), warm sandstone gray (#9BA4AE), crisp clean edges, subtle matte material texture. STRICTLY NO text, NO letters, NO numbers, NO callout lines, NO arrows, NO labels, NO watermarks anywhere in the image.
+   ```
+3. **自动泛洪去背与羽化裁剪**（完整保留物体内部白色高光，绝不穿透镂空）：
+   ```bash
+   python _shared/scripts/asset_cutout.py --in work/figures/assets/raw_comp.png --out work/figures/assets/comp_cutout.png --threshold 242 --feather 1.5 --pad 8
+   ```
+4. **HTML + SVG + Math 确定性渲染与自检**：
+   ```bash
+   python _shared/scripts/render_html_figure.py --html work/figures/fig_arch.html --out-png work/figures/fig_arch.png --out-pdf work/figures/fig_arch.pdf --width 1200 --height 660 --scale 2.5 --dpi 300
+   python _shared/scripts/figure_qa.py check work/figures/fig_arch.png --min-dpi 300
+   python _shared/scripts/figure_qa.py access work/figures/fig_arch.png
+   ```
+
+---
+
+## 二、什么时候用形态 B（连续基底图 + SVG 标注）
+
+- 建议用：生物/医学**有机形态**（细胞、组织、信号通路）、连续物理场"期刊图形摘要"质感。
+- 不建议用：纯逻辑流程、离散组件拓扑——优先走上面形态 A。
+- 铁律：**图字分离**——AI 只生成无文字基底图，中文/英文数学标注一律用 SVG/HTML 叠加；AI 图里依赖生成文字 = 必然乱码。
+
+## 三、形态 B 工作流总览（原有流程兼容保留）
 
 1. 生成**无文字基底图**：
    - **首选（宿主生图能力）**：调用当前 Agent 内置生图工具或子代理，严格传入下方「图字分离」结构化提示词，保存至 `work/figures/mech_xx_base.png`。

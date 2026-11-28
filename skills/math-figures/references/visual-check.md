@@ -24,11 +24,17 @@
 
 ### 1. 渲染预览与程序自检
 - matplotlib 图：调用 `figure_qa.render_preview(fig, ...)`、`layout_qa.audit_figure(fig)` 与 `figure_qa.audit_figure(fig)`，FAIL 先修；WARN 在读图时重点核对。
-- 非 matplotlib 图（手写 SVG / drawio / PPT / AI 基底合成）：
+- HTML + SVG 总装图（`render_html_figure.py`）：导出 300 DPI PNG 与矢量 PDF 后运行 `figure_qa.py check` 与 `figure_qa.py access`。
+- 纯 SVG / DrawIO / PPT / AI 基底合成图：
   ```bash
-  python ../_shared/scripts/svg_audit.py work/figures/mech_1.svg --png work/figures/mech_1.png --dpi 300 --json work/figures/mech_1.audit.json
+  python _shared/scripts/svg_audit.py work/figures/mech_1.svg --png work/figures/mech_1.png --dpi 300 --json work/figures/mech_1.audit.json
   ```
   七条判据（`OVERFLOW/TOUCH`、`COLLIDE`、`OCCLUDE`、`MASKED`、`CONTRAST`、`TINY`、`COLLAPSE/MERGE`），退出码非 0 禁交付。
+- **灰度与色盲可分预览**：
+  ```bash
+  python _shared/scripts/figure_qa.py access work/figures/
+  ```
+  自动为正式 PNG 生成 `_*_grayscale.png` 与 `_*_deuteranopia.png` 预览图（下划线前缀自动不干扰正式 `check` 统计），用原生看图确认黑白打印与红绿色盲场景下主次图例依然可分。
 
 ### 2. 原生多模态读图实操要点
 
@@ -62,4 +68,6 @@
 - [ ] 图号与题注和正文一致，图内无大标题
 - [ ] 位图 DPI ≥ 300；无 JPEG；数据图矢量优先（SVG/PDF）
 - [ ] `figure_qa.py check work/figures/* --min-dpi 300` 无 FAIL
+- [ ] 已运行 `figure_qa.py access work/figures/` 并复核灰度与色盲预览图可分性
+- [ ] 图内标签零 `snake_case` 代码标识（全部使用 `$V_{\text{cut}}$` 等数学上下标或学术展示名）
 - [ ] 最终投放宽度下 PDF 文字 ≥ 5pt（`audit_pdf_text.py`）

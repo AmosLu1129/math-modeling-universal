@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
@@ -20,6 +21,11 @@ SCRIPT_MAP = {
     "grouped-circular-heatmap": "make_grouped_circular_heatmap.py",
     "urban-park-cooling-combo": "make_urban_park_cooling_combo.py",
     "nature-chord-diagram": "make_nature_chord_diagram.py",
+    "morandi-3d-bar-heatmap": "make_morandi_3d_bar_heatmap.py",
+    "morandi-3d-surface-proj": "make_morandi_3d_surface_proj.py",
+    "morandi-ridgeline": "make_morandi_ridgeline.py",
+    "morandi-dumbbell": "make_morandi_dumbbell.py",
+    "morandi-sankey-flow": "make_morandi_sankey_flow.py",
 }
 
 ALIASES = {
@@ -40,6 +46,13 @@ ALIASES = {
     "urban-cooling": "urban-park-cooling-combo",
     "chord": "nature-chord-diagram",
     "circos": "nature-chord-diagram",
+    "3d-bar-heatmap": "morandi-3d-bar-heatmap",
+    "morandi-bar3d": "morandi-3d-bar-heatmap",
+    "3d-surface-proj": "morandi-3d-surface-proj",
+    "morandi-surface": "morandi-3d-surface-proj",
+    "ridgeline": "morandi-ridgeline",
+    "dumbbell": "morandi-dumbbell",
+    "sankey": "morandi-sankey-flow",
 }
 
 CJK_HINTS = {
@@ -60,6 +73,12 @@ CJK_HINTS = {
     "堆叠": "urban-park-cooling-combo",
     "和弦": "nature-chord-diagram",
     "circos": "nature-chord-diagram",
+    "3d柱状热图": "morandi-3d-bar-heatmap",
+    "立体柱": "morandi-3d-bar-heatmap",
+    "三维投影": "morandi-3d-surface-proj",
+    "山脊": "morandi-ridgeline",
+    "哑铃": "morandi-dumbbell",
+    "桑基": "morandi-sankey-flow",
 }
 
 
@@ -150,7 +169,9 @@ def main() -> None:
         shutil.copy2(src, dst)
         print(f"Copied template script: {dst}")
 
-    result = subprocess.run([sys.executable, str(dst)], cwd=str(project), check=False)
+    env = os.environ.copy()
+    env.setdefault("MATHFIG_SHARED_SCRIPTS", str(skill_root.parents[0]))
+    result = subprocess.run([sys.executable, str(dst)], cwd=str(project), env=env, check=False)
     if result.returncode != 0:
         raise SystemExit(result.returncode)
 

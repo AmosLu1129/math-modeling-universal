@@ -6,12 +6,13 @@ r"""将 work/results.json 单源绑定并编译为 LaTeX 宏、Typst 数据模�
     python export_paper_macros.py --results work/results.json \
         --out-tex output/paper/results_macros.tex \
         --out-typ output/paper/results_data.typ \
-        --tables-dir work/tables --table-format both
+        --tables-dir work/tables --table-format both \
+        --format-mode smart
     python export_paper_macros.py --results work/results.json --tables-dir work/tables --tables-spec work/tables_spec.json
     python export_paper_macros.py --self-test
 
 设计目标：
-- 让论文正文与表格直接引用 \ResVal{path} / \ResPct{path} / \ResInt{path} / \Val...（或 Typst #res("path")），
+- 让论文正文与表格直接引用 \ResVal{path} / \ResPct{path} / \ResSmart{path} / \ResPctSmart{path} / \ResInt{path}（或 Typst #res("path") / #res_smart("path")），
   一旦阶段 5/6 重跑更新了 results.json，重跑本脚本并重编译 PDF 即可全自动同步全文数字。
 - 错用不存在的 key 在 LaTeX/Typst 编译期直接报错，杜绝静默错漏或过时数字。
 """
@@ -26,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any
 
@@ -124,11 +126,135 @@ def format_raw(val: Any) -> str:
     return str(val)
 
 
+def _trim_decimal_str(s: str) -> str:
+    """Strip meaningless trailing fractional zeros while normalizing negative zero."""
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return "0" if s in ("-0", "-0.0", "") else s
+
+
+def _round_half_up_str(val: float | Decimal, digits: int, thousands: bool = False) -> str:
+    """Deterministic decimal half-up rounding to avoid binary IEEE-754 tie drift (e.g. 94.55 -> 94.6)."""
+    d = max(0, int(digits))
+    dec = val if isinstance(val, Decimal) else Decimal(str(float(val)))
+    q = Decimal("1") if d == 0 else Decimal(f"1e-{d}")
+    rounded = dec.quantize(q, rounding=ROUND_HALF_UP)
+    if rounded == 0:
+        rounded = Decimal("0").quantize(q)
+    s = f"{rounded:,f}" if thousands else f"{rounded:f}"
+    return "0" if s in ("-0", "-0.0") else s
+
+
+def _lookup_precision_spec(path: str, display_precision: dict[str, Any] | None) -> Any:
+    if not display_precision or not path:
+        return None
+    if path in display_precision:
+        return display_precision[path]
+    best_match = None
+    best_len = -1
+    for key, spec in display_precision.items():
+        if (path == key or path.endswith(f".{key}")) and len(key) > best_len:
+            best_match = spec
+            best_len = len(key)
+    return best_match
+
+
+def format_smart_number(
+    val: float | int,
+    path: str = "",
+    display_precision: dict[str, Any] | None = None,
+    latex: bool = True,
+) -> str:
+    """Semantic significant-digit number formatting (eliminates 47.0900 trailing-zero walls)."""
+    if isinstance(val, int) and not isinstance(val, bool):
+        return format_int_str(val, latex=latex)
+    fv = float(val)
+    if fv == 0.0:
+        return "0"
+
+    spec = _lookup_precision_spec(path, display_precision)
+    if isinstance(spec, int) and not isinstance(spec, bool):
+        d = max(0, spec)
+        s = _round_half_up_str(fv, d, thousands=abs(fv) >= 1000.0)
+        if latex and abs(fv) >= 1000.0:
+            s = s.replace(",", "{,}")
+        return "0" if s in ("-0", "-0.0") else s
+    if isinstance(spec, dict):
+        d = int(spec.get("digits", 2))
+        trim = bool(spec.get("trim_zeros", True))
+        use_sci = bool(spec.get("sci", False))
+        if use_sci or (0.0 < abs(fv) < 1e-4 and "digits" not in spec):
+            sci = f"{fv:.{max(0, d)}e}"
+            mant, exp_s = sci.split("e")
+            if trim:
+                mant = _trim_decimal_str(mant)
+            exp = int(exp_s)
+            return rf"\ensuremath{{{mant} \times 10^{{{exp}}}}}" if latex else f"{mant}e{exp}"
+        s = _round_half_up_str(fv, d, thousands=abs(fv) >= 1000.0)
+        if trim:
+            s = _trim_decimal_str(s)
+        if latex and abs(fv) >= 1000.0:
+            s = s.replace(",", "{,}")
+        return "0" if s in ("-0", "-0.0") else s
+
+    av = abs(fv)
+    if av < 1e-4:
+        sci = f"{fv:.2e}"
+        mant, exp_s = sci.split("e")
+        mant = _trim_decimal_str(mant)
+        exp = int(exp_s)
+        return rf"\ensuremath{{{mant} \times 10^{{{exp}}}}}" if latex else f"{mant}e{exp}"
+    if av >= 1000.0:
+        out = _trim_decimal_str(_round_half_up_str(fv, 1, thousands=True))
+        if latex:
+            out = out.replace(",", "{,}")
+        return "0" if out in ("-0", "-0.0") else out
+    if av >= 10.0:
+        max_d = 2
+    elif av >= 0.1:
+        max_d = 3
+    else:
+        max_d = 4
+    return _trim_decimal_str(_round_half_up_str(fv, max_d))
+
+
+def format_smart_pct(
+    val: float | int,
+    path: str = "",
+    display_precision: dict[str, Any] | None = None,
+    latex: bool = True,
+) -> str:
+    """Semantic percentage formatting with exact decimal half-up rounding (58.1000% -> 58.1%, 0.9455 -> 94.6%)."""
+    fv = float(val)
+    pct_dec = Decimal(str(fv)) * Decimal("100")
+    spec = _lookup_precision_spec(path, display_precision)
+    pct_suffix = r"\%" if latex else "%"
+    if isinstance(spec, int) and not isinstance(spec, bool):
+        if abs(fv) <= 1.0:
+            eff_d = max(1, min(spec, 2))
+            s = _trim_decimal_str(_round_half_up_str(pct_dec, eff_d))
+        else:
+            s = _round_half_up_str(pct_dec, max(0, spec))
+        return ("0" if s in ("-0", "-0.0") else s) + pct_suffix
+    if isinstance(spec, dict) and ("pct_digits" in spec or "digits" in spec):
+        d = int(spec.get("pct_digits", spec.get("digits", 2)))
+        trim = bool(spec.get("trim_zeros", True))
+        s = _round_half_up_str(pct_dec, max(0, d))
+        if trim:
+            s = _trim_decimal_str(s)
+        return ("0" if s in ("-0", "-0.0") else s) + pct_suffix
+    max_d = 3 if (Decimal("0") < abs(pct_dec) < Decimal("0.05")) else 2
+    s = _trim_decimal_str(_round_half_up_str(pct_dec, max_d))
+    return s + pct_suffix
+
+
 def flatten_leaves(obj: Any, prefix: str = "") -> list[tuple[str, Any]]:
-    """递归展平 JSON，保留有限数值与单行短标量字符串（≤80 字符）。"""
+    """递归展平 JSON，保留有限数值与单行短标量字符串（≤80 字符），跳过 display_precision 元数据。"""
     items: list[tuple[str, Any]] = []
     if isinstance(obj, dict):
         for k, v in obj.items():
+            if not prefix and k == "display_precision":
+                continue
             key = f"{prefix}.{k}" if prefix else str(k)
             items.extend(flatten_leaves(v, key))
     elif isinstance(obj, (list, tuple)):
@@ -195,10 +321,13 @@ def generate_latex_macros(
     digits: int = 4,
     pct_digits: int = 2,
     prefix: str = "Val",
+    format_mode: str = "fixed",
 ) -> str:
     leaves = flatten_leaves(results)
+    raw_dp = results.get("display_precision")
+    display_precision = raw_dp if isinstance(raw_dp, dict) else None
     lines = [
-        GENERATED_HEADER_TEX,
+        GENERATED_HEADER_TEX + f" format_mode={format_mode}",
         r"\makeatletter",
         "",
         r"% ---- Compile-time checked lookup macros ----",
@@ -211,6 +340,16 @@ def generate_latex_macros(
         r"  \@ifundefined{res@pct@\detokenize{#1}}{%",
         r"    \PackageError{results_macros}{Missing percentage results.json key: \detokenize{#1}}{Key missing or |value| > 10}%",
         r"  }{\@nameuse{res@pct@\detokenize{#1}}}%",
+        r"}",
+        r"\providecommand{\ResSmart}[1]{%",
+        r"  \@ifundefined{res@smart@\detokenize{#1}}{%",
+        r"    \PackageError{results_macros}{Missing smart results.json key: \detokenize{#1}}{Re-run export_paper_macros.py after updating work/results.json}%",
+        r"  }{\@nameuse{res@smart@\detokenize{#1}}}%",
+        r"}",
+        r"\providecommand{\ResPctSmart}[1]{%",
+        r"  \@ifundefined{res@pctsmart@\detokenize{#1}}{%",
+        r"    \PackageError{results_macros}{Missing smart percentage results.json key: \detokenize{#1}}{Key missing or |value| > 10}%",
+        r"  }{\@nameuse{res@pctsmart@\detokenize{#1}}}%",
         r"}",
         r"\providecommand{\ResInt}[1]{%",
         r"  \@ifundefined{res@int@\detokenize{#1}}{%",
@@ -233,14 +372,18 @@ def generate_latex_macros(
         if not path or not _is_safe_tex_key(path):
             continue
         if is_num(val):
-            v_tex = format_num_latex(val, digits=digits)
+            smart_tex = format_smart_number(val, path=path, display_precision=display_precision, latex=True)
+            v_tex = smart_tex if format_mode == "smart" else format_num_latex(val, digits=digits)
             r_tex = format_raw(val)
             lines.append(rf"\@namedef{{res@val@\detokenize{{{path}}}}}{{{v_tex}}}")
+            lines.append(rf"\@namedef{{res@smart@\detokenize{{{path}}}}}{{{smart_tex}}}")
             lines.append(rf"\@namedef{{res@raw@\detokenize{{{path}}}}}{{{r_tex}}}")
             fv = float(val)
             if abs(fv) <= 10.0:
-                pct_tex = f"{fv * 100.0:.{pct_digits}f}" + r"\%"
+                pct_smart_tex = format_smart_pct(val, path=path, display_precision=display_precision, latex=True)
+                pct_tex = pct_smart_tex if format_mode == "smart" else (f"{fv * 100.0:.{pct_digits}f}" + r"\%")
                 lines.append(rf"\@namedef{{res@pct@\detokenize{{{path}}}}}{{{pct_tex}}}")
+                lines.append(rf"\@namedef{{res@pctsmart@\detokenize{{{path}}}}}{{{pct_smart_tex}}}")
             if (isinstance(val, int) and not isinstance(val, bool)) or (abs(fv) < 1e15 and fv.is_integer()):
                 int_tex = format_int_str(int(round(fv)), latex=True)
                 lines.append(rf"\@namedef{{res@int@\detokenize{{{path}}}}}{{{int_tex}}}")
@@ -250,6 +393,7 @@ def generate_latex_macros(
         else:
             s_tex = escape_latex(str(val))
             lines.append(rf"\@namedef{{res@val@\detokenize{{{path}}}}}{{{s_tex}}}")
+            lines.append(rf"\@namedef{{res@smart@\detokenize{{{path}}}}}{{{s_tex}}}")
             lines.append(rf"\@namedef{{res@raw@\detokenize{{{path}}}}}{{{s_tex}}}")
 
     lines += [
@@ -267,13 +411,18 @@ def generate_typst_data(
     results: dict[str, Any],
     digits: int = 4,
     pct_digits: int = 2,
+    format_mode: str = "fixed",
 ) -> str:
     leaves = flatten_leaves(results)
-    lines = [GENERATED_HEADER_TYP, ""]
+    raw_dp = results.get("display_precision")
+    display_precision = raw_dp if isinstance(raw_dp, dict) else None
+    lines = [GENERATED_HEADER_TYP + f" format_mode={format_mode}", ""]
 
     raw_entries: list[str] = []
     fmt_entries: list[str] = []
+    smart_entries: list[str] = []
     pct_entries: list[str] = []
+    pct_smart_entries: list[str] = []
     int_entries: list[str] = []
 
     for path, val in leaves:
@@ -282,13 +431,18 @@ def generate_typst_data(
         k_lit = f'"{escape_typst_str(path)}"'
         if is_num(val):
             raw_lit = str(val) if (isinstance(val, int) and not isinstance(val, bool)) else f"{float(val):.6g}"
-            fmt_lit = f'"{format_num_typst(val, digits=digits)}"'
+            smart_str = format_smart_number(val, path=path, display_precision=display_precision, latex=False)
+            smart_lit = f'"{escape_typst_str(smart_str)}"'
+            fmt_lit = smart_lit if format_mode == "smart" else f'"{format_num_typst(val, digits=digits)}"'
             raw_entries.append(f"  {k_lit}: {raw_lit},")
             fmt_entries.append(f"  {k_lit}: {fmt_lit},")
+            smart_entries.append(f"  {k_lit}: {smart_lit},")
             fv = float(val)
             if abs(fv) <= 10.0:
-                pct_lit = f'"{fv * 100.0:.{pct_digits}f}%"'
+                pct_smart_lit = f'"{format_smart_pct(val, path=path, display_precision=display_precision, latex=False)}"'
+                pct_lit = pct_smart_lit if format_mode == "smart" else f'"{fv * 100.0:.{pct_digits}f}%"'
                 pct_entries.append(f"  {k_lit}: {pct_lit},")
+                pct_smart_entries.append(f"  {k_lit}: {pct_smart_lit},")
             if (isinstance(val, int) and not isinstance(val, bool)) or (abs(fv) < 1e15 and fv.is_integer()):
                 int_lit = f'"{format_int_str(int(round(fv)), latex=False)}"'
                 int_entries.append(f"  {k_lit}: {int_lit},")
@@ -296,6 +450,7 @@ def generate_typst_data(
             s_lit = f'"{escape_typst_str(str(val))}"'
             raw_entries.append(f"  {k_lit}: {s_lit},")
             fmt_entries.append(f"  {k_lit}: {s_lit},")
+            smart_entries.append(f"  {k_lit}: {s_lit},")
 
     lines.append("#let results_flat = (")
     lines.extend(raw_entries)
@@ -305,8 +460,16 @@ def generate_typst_data(
     lines.extend(fmt_entries)
     lines.append(")")
     lines.append("")
+    lines.append("#let results_smart = (")
+    lines.extend(smart_entries)
+    lines.append(")")
+    lines.append("")
     lines.append("#let results_pct = (")
     lines.extend(pct_entries)
+    lines.append(")")
+    lines.append("")
+    lines.append("#let results_pct_smart = (")
+    lines.extend(pct_smart_entries)
     lines.append(")")
     lines.append("")
     lines.append("#let results_int = (")
@@ -318,9 +481,17 @@ def generate_typst_data(
         '  assert(key in results_fmt, message: "Missing results.json key: " + key)',
         '  results_fmt.at(key)',
         '}',
+        '#let res_smart(key) = {',
+        '  assert(key in results_smart, message: "Missing smart results.json key: " + key)',
+        '  results_smart.at(key)',
+        '}',
         '#let res_pct(key) = {',
         '  assert(key in results_pct, message: "Missing percentage results.json key: " + key)',
         '  results_pct.at(key)',
+        '}',
+        '#let res_pct_smart(key) = {',
+        '  assert(key in results_pct_smart, message: "Missing smart percentage results.json key: " + key)',
+        '  results_pct_smart.at(key)',
         '}',
         '#let res_int(key) = {',
         '  assert(key in results_int, message: "Missing integer results.json key: " + key)',
@@ -356,7 +527,7 @@ def resolve_path(data: Any, path: str) -> Any:
     return cur
 
 
-def _format_cell(val: Any, fmt: str | None, digits: int, latex: bool) -> str:
+def _format_cell(val: Any, fmt: str | None, digits: int, latex: bool, format_mode: str = "fixed") -> str:
     if val is None:
         return "--"
     if fmt == "bool" or isinstance(val, bool):
@@ -370,6 +541,10 @@ def _format_cell(val: Any, fmt: str | None, digits: int, latex: bool) -> str:
             return format_raw(val)
         if fmt == "int":
             return format_int_str(int(round(fv)), latex=latex)
+        if fmt == "smart":
+            return format_smart_number(val, latex=latex)
+        if fmt == "pct_smart":
+            return format_smart_pct(val, latex=latex)
         if fmt and re.fullmatch(r"f\d+", fmt):
             d = int(fmt[1:])
             return f"{fv:.{d}f}"
@@ -383,6 +558,8 @@ def _format_cell(val: Any, fmt: str | None, digits: int, latex: bool) -> str:
                 mant, exp_s = sci.split("e")
                 return rf"\ensuremath{{{mant} \times 10^{{{int(exp_s)}}}}}"
             return sci
+        if format_mode == "smart":
+            return format_smart_number(val, latex=latex)
         return format_num_latex(val, digits=digits) if latex else format_num_typst(val, digits=digits)
     s = str(val)
     return escape_latex(s) if latex else s
@@ -395,7 +572,7 @@ def discover_table_specs(results: Any, digits: int = 4) -> list[dict[str, Any]]:
     def walk(obj: Any, path: str) -> None:
         if isinstance(obj, dict):
             for k, v in obj.items():
-                if k == "key_metrics":
+                if k in ("key_metrics", "display_precision"):
                     continue
                 sub_path = f"{path}.{k}" if path else str(k)
                 walk(v, sub_path)
@@ -433,7 +610,12 @@ def discover_table_specs(results: Any, digits: int = 4) -> list[dict[str, Any]]:
     return specs
 
 
-def render_latex_table(spec: dict[str, Any], rows: list[dict[str, Any]], digits: int = 4) -> str:
+def render_latex_table(
+    spec: dict[str, Any],
+    rows: list[dict[str, Any]],
+    digits: int = 4,
+    format_mode: str = "fixed",
+) -> str:
     cols = spec["columns"]
     align_str = "".join(c.get("align", "l") for c in cols)
     headers = " & ".join(escape_latex(str(c.get("header", c["key"]))) for c in cols)
@@ -447,7 +629,7 @@ def render_latex_table(spec: dict[str, Any], rows: list[dict[str, Any]], digits:
     ]
     for row in rows:
         cells = [
-            _format_cell(row.get(c["key"]), c.get("fmt"), digits=digits, latex=True)
+            _format_cell(row.get(c["key"]), c.get("fmt"), digits=digits, latex=True, format_mode=format_mode)
             for c in cols
         ]
         body_lines.append(" & ".join(cells) + r" \\")
@@ -467,7 +649,12 @@ def render_latex_table(spec: dict[str, Any], rows: list[dict[str, Any]], digits:
     return "\n".join(body_lines) + "\n"
 
 
-def render_typst_table(spec: dict[str, Any], rows: list[dict[str, Any]], digits: int = 4) -> str:
+def render_typst_table(
+    spec: dict[str, Any],
+    rows: list[dict[str, Any]],
+    digits: int = 4,
+    format_mode: str = "fixed",
+) -> str:
     cols = spec["columns"]
     align_map = {"r": "right", "c": "center", "l": "left"}
     aligns = ", ".join(align_map.get(c.get("align", "l"), "left") for c in cols)
@@ -486,7 +673,7 @@ def render_typst_table(spec: dict[str, Any], rows: list[dict[str, Any]], digits:
     for row in rows:
         cells = []
         for c in cols:
-            txt = _format_cell(row.get(c["key"]), c.get("fmt"), digits=digits, latex=False)
+            txt = _format_cell(row.get(c["key"]), c.get("fmt"), digits=digits, latex=False, format_mode=format_mode)
             cells.append(f"[{txt}]")
         lines.append("  " + ", ".join(cells) + ",")
     lines.extend([
@@ -511,6 +698,7 @@ def export_tables(
     tables_spec_path: Path | None,
     table_format: str,
     digits: int,
+    format_mode: str = "fixed",
 ) -> list[Path]:
     tables_dir.mkdir(parents=True, exist_ok=True)
     if tables_spec_path is not None:
@@ -528,11 +716,11 @@ def export_tables(
         rows = [r for r in data if isinstance(r, dict)]
         if table_format in ("latex", "both"):
             tex_p = tables_dir / f"{name}.tex"
-            tex_p.write_text(render_latex_table(spec, rows, digits=digits), encoding="utf-8")
+            tex_p.write_text(render_latex_table(spec, rows, digits=digits, format_mode=format_mode), encoding="utf-8")
             written.append(tex_p)
         if table_format in ("typst", "both"):
             typ_p = tables_dir / f"{name}.typ"
-            typ_p.write_text(render_typst_table(spec, rows, digits=digits), encoding="utf-8")
+            typ_p.write_text(render_typst_table(spec, rows, digits=digits, format_mode=format_mode), encoding="utf-8")
             written.append(typ_p)
     return written
 
@@ -660,6 +848,37 @@ Bad=\ResVal{Q9.missing_key}.
             print("[SELF-TEST] PASS (including live xelatex macro, table & missing-key compile checks)")
         else:
             print("[SELF-TEST] PASS (macro/table generation verified; xelatex not installed)")
+
+    # Smart precision & display_precision verification (v4.2 + v4.3 decimal rounding & pct separation)
+    smart_sample = {
+        "T1": {"temp": 47.0900, "gain": 0.5810, "small_err": 0.0045, "big_n": 12450.0, "exact": 12.3456, "tie": 0.9455, "frac_int": 0.167, "frac_pct_dict": 0.9178},
+        "display_precision": {
+            "T1.exact": {"digits": 3, "trim_zeros": False},
+            "T1.tie": {"digits": 4, "pct_digits": 1},
+            "T1.frac_int": 3,
+            "T1.frac_pct_dict": {"digits": 3, "pct_digits": 2, "trim_zeros": False},
+        },
+    }
+    smart_fixed_tex = generate_latex_macros(smart_sample, digits=4, pct_digits=2, format_mode="fixed")
+    assert r"\@namedef{res@smart@\detokenize{T1.temp}}{47.09}" in smart_fixed_tex, smart_fixed_tex
+    assert r"\@namedef{res@pctsmart@\detokenize{T1.gain}}{58.1\%}" in smart_fixed_tex, smart_fixed_tex
+    assert r"\@namedef{res@smart@\detokenize{T1.big_n}}{12{,}450}" in smart_fixed_tex, smart_fixed_tex
+    assert r"\@namedef{res@smart@\detokenize{T1.exact}}{12.346}" in smart_fixed_tex, smart_fixed_tex
+    assert r"\@namedef{res@pctsmart@\detokenize{T1.tie}}{94.6\%}" in smart_fixed_tex, smart_fixed_tex
+    assert r"\@namedef{res@pctsmart@\detokenize{T1.frac_int}}{16.7\%}" in smart_fixed_tex, smart_fixed_tex
+    assert r"\@namedef{res@pctsmart@\detokenize{T1.frac_pct_dict}}{91.78\%}" in smart_fixed_tex, smart_fixed_tex
+    assert r"\@namedef{res@val@\detokenize{T1.temp}}{47.0900}" in smart_fixed_tex, smart_fixed_tex
+
+    smart_mode_tex = generate_latex_macros(smart_sample, digits=4, pct_digits=2, format_mode="smart")
+    assert "format_mode=smart" in smart_mode_tex
+    assert r"\@namedef{res@val@\detokenize{T1.temp}}{47.09}" in smart_mode_tex, smart_mode_tex
+    assert r"\@namedef{res@pct@\detokenize{T1.gain}}{58.1\%}" in smart_mode_tex, smart_mode_tex
+    assert r"\@namedef{res@pct@\detokenize{T1.tie}}{94.6\%}" in smart_mode_tex, smart_mode_tex
+    assert r"\@namedef{res@pct@\detokenize{T1.frac_int}}{16.7\%}" in smart_mode_tex, smart_mode_tex
+    smart_mode_typ = generate_typst_data(smart_sample, digits=4, pct_digits=2, format_mode="smart")
+    assert '"T1.gain": "58.1%"' in smart_mode_typ and "res_smart" in smart_mode_typ, smart_mode_typ
+    assert "display_precision" not in smart_mode_tex
+    print("[SELF-TEST] PASS v4.2/v4.3 smart precision, decimal rounding & pct separation checks")
     return 0
 
 
@@ -676,6 +895,12 @@ def main() -> int:
     ap.add_argument("--table-format", choices=("latex", "typst", "both"), default="latex")
     ap.add_argument("--digits", type=int, default=4, help="默认浮点数小数位数（默认 4）")
     ap.add_argument("--pct-digits", type=int, default=2, help="默认百分比小数位数（默认 2）")
+    ap.add_argument(
+        "--format-mode",
+        choices=("fixed", "smart"),
+        default="fixed",
+        help="数字格式模式：fixed 保留固定小数位（兼容 v4.1）；smart 按量级智能控位并剥离无效尾零（o_award 推荐）",
+    )
     ap.add_argument("--prefix", default="Val", help="纯字母 \\newcommand 别名前缀（默认 Val）")
     ap.add_argument("--self-test", action="store_true", help="运行内置自检")
     args = ap.parse_args()
@@ -698,26 +923,44 @@ def main() -> int:
         out_tex = Path(args.out_tex)
         out_tex.parent.mkdir(parents=True, exist_ok=True)
         out_tex.write_text(
-            generate_latex_macros(results, digits=args.digits, pct_digits=args.pct_digits, prefix=args.prefix),
+            generate_latex_macros(
+                results,
+                digits=args.digits,
+                pct_digits=args.pct_digits,
+                prefix=args.prefix,
+                format_mode=args.format_mode,
+            ),
             encoding="utf-8",
         )
-        print(f"[OK] LaTeX 宏已生成: {out_tex}")
+        print(f"[OK] LaTeX 宏已生成: {out_tex} (format_mode={args.format_mode})")
 
     if args.out_typ:
         out_typ = Path(args.out_typ)
         out_typ.parent.mkdir(parents=True, exist_ok=True)
         out_typ.write_text(
-            generate_typst_data(results, digits=args.digits, pct_digits=args.pct_digits),
+            generate_typst_data(
+                results,
+                digits=args.digits,
+                pct_digits=args.pct_digits,
+                format_mode=args.format_mode,
+            ),
             encoding="utf-8",
         )
-        print(f"[OK] Typst 数据已生成: {out_typ}")
+        print(f"[OK] Typst 数据已生成: {out_typ} (format_mode={args.format_mode})")
 
     if args.tables_dir:
         spec_path = Path(args.tables_spec) if args.tables_spec else None
         if spec_path is not None and not spec_path.is_file():
             print(f"[错误] tables-spec 文件不存在: {spec_path}")
             return 2
-        written = export_tables(results, Path(args.tables_dir), spec_path, args.table_format, args.digits)
+        written = export_tables(
+            results,
+            Path(args.tables_dir),
+            spec_path,
+            args.table_format,
+            args.digits,
+            format_mode=args.format_mode,
+        )
         print(f"[OK] 已生成 {len(written)} 个表格文件 -> {args.tables_dir}")
 
     return 0

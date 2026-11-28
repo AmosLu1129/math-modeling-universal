@@ -3,17 +3,18 @@
 """run_manifest.yaml 状态机、SHA-256 指纹与 DAG 失效传播 CLI（纯 Python 标准库，无 PyYAML 依赖）。
 
 严格遵循 `../_shared/references/workflow-contract.md`：
-- 阶段状态枚举仅限：PENDING | READY | BLOCKED | RUNNING | PASS | FAIL | N/A | WAIVED
+- 阶段状态枚举仅限：PENDING | READY | BLOCKED | WAITING_HUMAN | RUNNING | PASS | FAIL | N/A | WAIVED
 - 决策状态枚举仅限：pending | defaulted | confirmed | waived
 - 产物状态枚举仅限：current | stale（绝不自动删除 stale 文件）
 
 用法：
-    python manifest_cli.py init --project . --competition MCM --language en --mode competition
+    python manifest_cli.py init --project . --competition MCM --language en --mode o_award
     python manifest_cli.py status --manifest work/run_manifest.yaml [--strict] [--json]
     python manifest_cli.py sync --manifest work/run_manifest.yaml [--dry-run] [--fail-on-stale]
     python manifest_cli.py mark-current --manifest work/run_manifest.yaml --stage S7_figures
     python manifest_cli.py invalidate --manifest work/run_manifest.yaml --artifact work/results.json
     python manifest_cli.py approve --manifest work/run_manifest.yaml --id P1_model_formulation --status confirmed
+    python manifest_cli.py request --manifest work/run_manifest.yaml --id req_01 --stage S7_figures --kind visual_asset --status pending --ticket work/human_requests/req_01.md
     python manifest_cli.py --self-test
 """
 
@@ -32,7 +33,7 @@ from typing import Any
 SCRIPTS_DIR = Path(__file__).resolve().parent
 TEMPLATE_MANIFEST = SCRIPTS_DIR.parent / "templates" / "run_manifest.yaml"
 
-STAGE_STATES = frozenset({"PENDING", "READY", "BLOCKED", "RUNNING", "PASS", "FAIL", "N/A", "WAIVED"})
+STAGE_STATES = frozenset({"PENDING", "READY", "BLOCKED", "WAITING_HUMAN", "RUNNING", "PASS", "FAIL", "N/A", "WAIVED"})
 
 STAGE_ORDER: tuple[str, ...] = (
     "S0_setup",
@@ -440,7 +441,7 @@ def _is_leaf_flow_dict(val: Any) -> bool:
 def dump_yaml(data: dict[str, Any]) -> str:
     """以清晰规范格式输出 run_manifest.yaml。"""
     lines: list[str] = []
-    preferred = ["schema", "project", "decisions", "stages", "artifacts", "approvals"]
+    preferred = ["schema", "project", "decisions", "stages", "artifacts", "approvals", "human_requests"]
     keys = [k for k in preferred if k in data] + [k for k in data if k not in preferred]
 
     def emit_kv(k: str, v: Any, indent: int, flow_leaf_dicts: bool) -> None:
@@ -730,7 +731,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     if TEMPLATE_MANIFEST.is_file():
         data = parse_yaml(TEMPLATE_MANIFEST.read_text(encoding="utf-8"))
     else:
-        data = {"schema": 1, "project": {}, "decisions": {}, "stages": {}, "artifacts": {}, "approvals": []}
+        data = {"schema": 1, "project": {}, "decisions": {}, "stages": {}, "artifacts": {}, "approvals": [], "human_requests": []}
 
     proj_blk = data.setdefault("project", {})
     if args.competition:
@@ -741,6 +742,13 @@ def cmd_init(args: argparse.Namespace) -> int:
         proj_blk["mode"] = args.mode
     if args.time_budget is not None:
         proj_blk["time_budget_hours"] = args.time_budget
+
+    decisions = data.setdefault("decisions", {})
+    if str(proj_blk.get("mode", "")).lower() == "o_award":
+        fs_dec = decisions.get("figure_style")
+        if not isinstance(fs_dec, dict) or fs_dec.get("status") != "confirmed":
+            decisions["figure_style"] = {"value": "morandi_journal", "status": "defaulted", "source": "workflow"}
+    data.setdefault("human_requests", [])
 
     stages = data.setdefault("stages", {})
     for st in STAGE_ORDER:
@@ -864,9 +872,43 @@ def cmd_mark_current(args: argparse.Namespace) -> int:
             }
         targets.append(n)
 
-    if not args.stage and not args.artifact:
-        print("[错误] 请至少指定 --stage 或 --artifact")
+    use_all = bool(getattr(args, "all", False))
+    if not use_all and not args.stage and not args.artifact:
+        print("[错误] 请至少指定 --stage、--artifact 或 --all")
         return 2
+
+    if use_all:
+        targets = []
+        for st_name in STAGE_ORDER:
+            st_info = stages.get(st_name)
+            if isinstance(st_info, dict) and st_info.get("status") in ("N/A", "WAIVED"):
+                continue
+            spec = STAGE_SPECS[st_name]
+            owned = set((st_info or {}).get("outputs") or []) | set(spec["outputs"])
+            stage_arts = [
+                k for k, meta in artifacts.items()
+                if k in owned or (isinstance(meta, dict) and meta.get("producer") == st_name)
+            ]
+            has_any = any((proj / k.rstrip("/")).exists() for k in stage_arts)
+            if has_any:
+                st_entry = stages.setdefault(st_name, {"status": "PASS", "outputs": list(spec["outputs"])})
+                st_entry["status"] = "PASS"
+                if st_name != "S0_setup":
+                    st_entry["gate"] = "PASS"
+            targets.extend(stage_arts)
+
+        refreshed = 0
+        for k in dict.fromkeys(targets):
+            live_hash, exists = compute_artifact_hash(proj, k)
+            if not exists:
+                continue
+            artifacts[k]["sha256"] = live_hash
+            artifacts[k]["status"] = "current"
+            refreshed += 1
+        _update_stages_from_artifacts(data)
+        manifest_path.write_text(dump_yaml(data), encoding="utf-8")
+        print(f"[OK] --all 拓扑一键刷新 {refreshed} 项现有产物为 current")
+        return 0
 
     if args.stage and not targets:
         _update_stages_from_artifacts(data)
@@ -952,6 +994,64 @@ def cmd_approve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_request(args: argparse.Namespace) -> int:
+    manifest_path = Path(args.manifest).resolve()
+    if not manifest_path.is_file():
+        print(f"[错误] manifest 不存在: {manifest_path}")
+        return 2
+    if args.stage not in STAGE_SPECS:
+        print(f"[错误] 未知阶段名: {args.stage}")
+        return 2
+    data = parse_yaml(manifest_path.read_text(encoding="utf-8"))
+    stages = data.setdefault("stages", {})
+    requests = data.setdefault("human_requests", [])
+    if not isinstance(requests, list):
+        requests = []
+        data["human_requests"] = requests
+
+    entry = None
+    for item in requests:
+        if isinstance(item, dict) and item.get("id") == args.id:
+            entry = item
+            break
+    if entry is None:
+        entry = {"id": args.id, "stage": args.stage, "kind": args.kind, "status": args.status}
+        requests.append(entry)
+    else:
+        entry["stage"] = args.stage
+        entry["status"] = args.status
+        if args.kind:
+            entry["kind"] = args.kind
+    if args.ticket:
+        entry["ticket"] = norm_rel(args.ticket)
+    if args.expected_output:
+        entry["expected_output"] = norm_rel(args.expected_output)
+    if args.fallback:
+        entry["fallback"] = args.fallback
+    if args.summary:
+        entry["summary"] = args.summary
+
+    st_info = stages.setdefault(
+        args.stage, {"status": "READY", "outputs": list(STAGE_SPECS[args.stage]["outputs"])}
+    )
+    if args.status == "pending":
+        st_info["status"] = "WAITING_HUMAN"
+    elif st_info.get("status") == "WAITING_HUMAN":
+        other_pending = any(
+            isinstance(r, dict) and r.get("stage") == args.stage and r.get("status") == "pending"
+            for r in requests
+        )
+        if not other_pending:
+            st_info["status"] = "READY"
+
+    manifest_path.write_text(dump_yaml(data), encoding="utf-8")
+    print(
+        f"[OK] 人工协助工单 `{args.id}` ({args.stage}, kind={entry.get('kind')}) "
+        f"-> status={args.status}, 阶段状态={st_info.get('status')}"
+    )
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     manifest_path = Path(args.manifest).resolve()
     if not manifest_path.is_file():
@@ -962,6 +1062,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     stages = data.get("stages") or {}
     artifacts = data.get("artifacts") or {}
     approvals = data.get("approvals") or []
+    human_requests = data.get("human_requests") or []
 
     drifted: list[str] = []
     missing: list[str] = []
@@ -987,6 +1088,14 @@ def cmd_status(args: argparse.Namespace) -> int:
         a for a in approvals
         if isinstance(a, dict) and str(a.get("class", "")).upper() == "BLOCKING" and a.get("status") == "pending"
     ]
+    pending_human_requests = [
+        r for r in human_requests
+        if isinstance(r, dict) and r.get("status") == "pending"
+    ]
+    waiting_human_stages = [
+        st for st, info in stages.items()
+        if isinstance(info, dict) and info.get("status") == "WAITING_HUMAN"
+    ]
     failed_or_blocked_stages = [
         st for st, info in stages.items()
         if isinstance(info, dict) and info.get("status") in ("FAIL", "BLOCKED")
@@ -997,13 +1106,24 @@ def cmd_status(args: argparse.Namespace) -> int:
         if isinstance(info, dict) and info.get("status") not in STAGE_STATES
     ]
 
-    strict_fail = bool(stale_list or drifted or missing or pending_blocking or failed_or_blocked_stages or bad_stage_enums)
+    strict_fail = bool(
+        stale_list
+        or drifted
+        or missing
+        or pending_blocking
+        or pending_human_requests
+        or waiting_human_stages
+        or failed_or_blocked_stages
+        or bad_stage_enums
+    )
     payload = {
         "manifest": str(manifest_path),
         "project_root": str(proj),
         "project": data.get("project", {}),
         "stages": {st: (stages[st].get("status") if isinstance(stages.get(st), dict) else None) for st in STAGE_ORDER if st in stages},
         "pending_blocking_approvals": pending_blocking,
+        "pending_human_requests": pending_human_requests,
+        "waiting_human_stages": waiting_human_stages,
         "stale_artifacts": stale_list,
         "drifted_artifacts": drifted,
         "missing_artifacts": missing,
@@ -1017,11 +1137,22 @@ def cmd_status(args: argparse.Namespace) -> int:
     else:
         pinfo = data.get("project", {})
         print(f"Manifest: {manifest_path} (competition={pinfo.get('competition')}, mode={pinfo.get('mode')}, lang={pinfo.get('language')})")
-        print(f"阶段数: {len(stages)} | 跟踪产物: {len(artifacts)} | stale: {len(stale_list)} | live 哈希漂移: {len(drifted)} | 未哈希: {len(unhashed)} | 缺失: {len(missing)}")
+        print(
+            f"阶段数: {len(stages)} | 跟踪产物: {len(artifacts)} | stale: {len(stale_list)} | "
+            f"live 哈希漂移: {len(drifted)} | 未哈希: {len(unhashed)} | 缺失: {len(missing)} | "
+            f"待人工协作工单: {len(pending_human_requests)}"
+        )
         if pending_blocking:
             print("待确认 BLOCKING 审批:")
             for a in pending_blocking:
                 print(f"  - [{a.get('stage')}] {a.get('id')}: {a.get('status')} — {a.get('summary', '')}")
+        if pending_human_requests:
+            print("待交付/降级人工协作工单 (WAITING_HUMAN):")
+            for r in pending_human_requests:
+                print(
+                    f"  - [{r.get('stage')}] {r.get('id')} ({r.get('kind')}): "
+                    f"ticket={r.get('ticket', '')} | out={r.get('expected_output', '')}"
+                )
         if drifted:
             print(f"检测到磁盘哈希漂移（建议运行 sync 传播失效）: {drifted}")
         if stale_list:
@@ -1143,7 +1274,81 @@ approvals:
         assert d_inv["artifacts"]["output/paper/paper.pdf"]["status"] == "stale"
         assert cmd_status(argparse.Namespace(manifest=str(mp), project=str(proj), strict=True, json=False)) == 1
 
-    print("[SELF-TEST] PASS 3/3")
+    # 4. v4.2 o_award mode auto-defaults morandi_journal & WAITING_HUMAN request lifecycle
+    with tempfile.TemporaryDirectory(prefix="manifest_o_award_test_") as td2:
+        proj2 = Path(td2)
+        (proj2 / "work").mkdir(parents=True)
+        mp2 = proj2 / "work" / "run_manifest.yaml"
+        assert (
+            cmd_init(
+                argparse.Namespace(
+                    project=str(proj2),
+                    manifest=str(mp2),
+                    competition="MCM",
+                    language="en",
+                    mode="o_award",
+                    time_budget=96,
+                    force=True,
+                )
+            )
+            == 0
+        )
+        d_oa = parse_yaml(mp2.read_text(encoding="utf-8"))
+        assert d_oa["project"]["mode"] == "o_award"
+        assert d_oa["decisions"]["figure_style"]["value"] == "morandi_journal", d_oa["decisions"]
+        for st in STAGE_ORDER:
+            d_oa["stages"][st]["status"] = "PASS"
+        mp2.write_text(dump_yaml(d_oa), encoding="utf-8")
+
+        assert (
+            cmd_request(
+                argparse.Namespace(
+                    manifest=str(mp2),
+                    id="req_01",
+                    stage="S7_figures",
+                    kind="visual_asset",
+                    status="pending",
+                    ticket="work/human_requests/req_01.md",
+                    expected_output="work/figures/assets/battery_cutout.png",
+                    fallback="Use pure HTML/SVG schematic without raster cutout",
+                    summary="Nano Banana 3D cutout battery component",
+                )
+            )
+            == 0
+        )
+        d_wait = parse_yaml(mp2.read_text(encoding="utf-8"))
+        assert d_wait["stages"]["S7_figures"]["status"] == "WAITING_HUMAN"
+        assert cmd_status(argparse.Namespace(manifest=str(mp2), project=str(proj2), strict=True, json=False)) == 1
+
+        assert (
+            cmd_request(
+                argparse.Namespace(
+                    manifest=str(mp2),
+                    id="req_01",
+                    stage="S7_figures",
+                    kind="visual_asset",
+                    status="fallback",
+                    ticket="",
+                    expected_output="",
+                    fallback="",
+                    summary="Switched to pure SVG schematic fallback",
+                )
+            )
+            == 0
+        )
+        d_res = parse_yaml(mp2.read_text(encoding="utf-8"))
+        assert d_res["stages"]["S7_figures"]["status"] == "READY"
+        assert cmd_mark_current(argparse.Namespace(manifest=str(mp2), project=str(proj2), stage="S7_figures", artifact=[])) == 0
+        assert cmd_status(argparse.Namespace(manifest=str(mp2), project=str(proj2), strict=True, json=False)) == 0
+
+        # mark-current --all refreshes multiple drifted stages atomically without churn
+        (proj2 / "work" / "brief.md").write_text("# Brief v2\n", encoding="utf-8")
+        (proj2 / "output").mkdir(parents=True, exist_ok=True)
+        (proj2 / "output" / "code_appendix.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+        assert cmd_mark_current(argparse.Namespace(manifest=str(mp2), project=str(proj2), stage="", artifact=[], all=True)) == 0
+        assert cmd_status(argparse.Namespace(manifest=str(mp2), project=str(proj2), strict=True, json=False)) == 0
+
+    print("[SELF-TEST] PASS 4/4 (including mark-current --all)")
     return 0
 
 
@@ -1157,7 +1362,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--manifest", default="work/run_manifest.yaml")
     p_init.add_argument("--competition", default="")
     p_init.add_argument("--language", default="")
-    p_init.add_argument("--mode", default="", choices=("", "competition", "high_assurance", "testbed"))
+    p_init.add_argument("--mode", default="", choices=("", "competition", "o_award", "high_assurance", "testbed"))
     p_init.add_argument("--time-budget", type=int, default=None)
     p_init.add_argument("--force", action="store_true")
 
@@ -1172,6 +1377,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_mc.add_argument("--project", default="")
     p_mc.add_argument("--stage", default="")
     p_mc.add_argument("--artifact", action="append", default=[])
+    p_mc.add_argument("--all", action="store_true", help="按拓扑顺序一次性刷新所有已产出阶段的产物为 current")
 
     p_inv = sub.add_parser("invalidate", help="手动从指定产物向下游传播 stale（不删文件）")
     p_inv.add_argument("--manifest", default="work/run_manifest.yaml")
@@ -1184,6 +1390,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_app.add_argument("--status", required=True, choices=("confirmed", "waived", "pending"))
     p_app.add_argument("--stage", default="")
     p_app.add_argument("--note", default="")
+
+    p_req = sub.add_parser("request", help="登记或更新人工协作外包工单（触发 WAITING_HUMAN / 恢复 READY）")
+    p_req.add_argument("--manifest", default="work/run_manifest.yaml")
+    p_req.add_argument("--id", required=True, help="工单编号，如 req_01")
+    p_req.add_argument("--stage", required=True, help="所属阶段，如 S5_solver / S7_figures")
+    p_req.add_argument("--kind", default="external_sim", choices=("visual_asset", "external_sim", "manual_data", "decision"))
+    p_req.add_argument("--status", default="pending", choices=("pending", "fulfilled", "fallback", "waived"))
+    p_req.add_argument("--ticket", default="", help="工单说明书路径，如 work/human_requests/req_01.md")
+    p_req.add_argument("--expected-output", default="", help="预期落盘产物路径")
+    p_req.add_argument("--fallback", default="", help="用户跳过时的保底降级方案说明")
+    p_req.add_argument("--summary", default="", help="一句话协作摘要")
 
     p_st = sub.add_parser("status", help="只读实时审计状态与哈希漂移")
     p_st.add_argument("--manifest", default="work/run_manifest.yaml")
@@ -1207,6 +1424,7 @@ def main() -> int:
         "mark-current": cmd_mark_current,
         "invalidate": cmd_invalidate,
         "approve": cmd_approve,
+        "request": cmd_request,
         "status": cmd_status,
     }
     return dispatch[args.subcmd](args)

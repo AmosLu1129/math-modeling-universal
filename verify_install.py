@@ -67,6 +67,8 @@ def run_smoke_suite(mounted_workflow_dir: Path) -> list[str]:
         ("mm_run manifest_cli.py --self-test", [sys.executable, str(mm_run), "manifest_cli.py", "--self-test"]),
         ("direct _shared check_formulation.py --self-test", [sys.executable, str(mounted_workflow_dir / "_shared" / "scripts" / "check_formulation.py"), "--self-test"]),
         ("direct _shared paper_qa.py --self-test", [sys.executable, str(mounted_workflow_dir / "_shared" / "scripts" / "paper_qa.py"), "--self-test"]),
+        ("direct _shared stage_cache.py --self-test", [sys.executable, str(mounted_workflow_dir / "_shared" / "scripts" / "stage_cache.py"), "--self-test"]),
+        ("direct _shared pack_submission.py --self-test", [sys.executable, str(mounted_workflow_dir / "_shared" / "scripts" / "pack_submission.py"), "--self-test"]),
     ]:
         res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf8", errors="replace")
         if res.returncode != 0:

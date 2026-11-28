@@ -1,22 +1,66 @@
 \documentclass[a4paper,12pt]{article}
 
 % ======== Packages ========
-\usepackage[top=1in,bottom=1in,left=1in,right=1in]{geometry}
+\usepackage[top=1in,bottom=1in,left=1in,right=1in,headheight=15pt]{geometry}
 \usepackage{amsmath,amssymb}
 \usepackage{fontspec}
+\usepackage{xcolor}
+\usepackage{array}
+\usepackage{float}
 \usepackage{titlesec}
 \usepackage{fancyhdr}
 \usepackage{booktabs}
 \usepackage{listings}
 \usepackage{graphicx}
 \usepackage{ifthen}
-\usepackage{times}
-\usepackage{hyperref}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+\usepackage{lastpage}
+\usepackage[hidelinks]{hyperref}
 
-% ======== Fonts ========
-\setmainfont{Times New Roman}
-\setsansfont{Arial}
-\setmonofont{Courier New}
+% ======== Fonts (with cross-platform fallbacks) ========
+\IfFontExistsTF{Times New Roman}{\setmainfont{Times New Roman}}{}
+\IfFontExistsTF{Arial}{\setsansfont{Arial}}{}
+\IfFontExistsTF{Consolas}{%
+  \setmonofont{Consolas}%
+}{%
+  \IfFontExistsTF{Courier New}{\setmonofont{Courier New}}{}%
+}
+
+% ======== Morandi Color Tokens & Key Finding Card ========
+\definecolor{morandiBlue}{HTML}{4E6E8E}
+\definecolor{morandiRust}{HTML}{C86D5B}
+\definecolor{morandiSage}{HTML}{6D9A87}
+\definecolor{morandiAmber}{HTML}{D9A462}
+\definecolor{morandiBg}{HTML}{F5F7F9}
+\definecolor{morandiBorder}{HTML}{C5D0DC}
+
+\newtcolorbox{keyfinding}[1][Key Finding]{%
+  enhanced,
+  breakable,
+  colback=morandiBg,
+  colframe=morandiBlue,
+  colbacktitle=morandiBlue,
+  coltitle=white,
+  fonttitle=\bfseries\sffamily,
+  boxrule=0.7pt,
+  leftrule=2.4pt,
+  arc=2.5pt,
+  left=8pt,
+  right=8pt,
+  top=6pt,
+  bottom=6pt,
+  title={#1},
+}
+
+\floatname{algorithm}{Algorithm}
+\algrenewcommand\algorithmicrequire{\textbf{Input:}}
+\algrenewcommand\algorithmicensure{\textbf{Output:}}
+
+% ======== Single-Source Results Macros (auto-loaded when available) ========
+\IfFileExists{results_macros.tex}{\input{results_macros.tex}}{}
 
 % ======== Variables ========
 \newcommand{\MCMYear}{2026}
@@ -24,15 +68,14 @@
 \newcommand{\ProblemChosen}{A}
 \newcommand{\PaperTitle}{[Paper Title]}
 \newcommand{\PaperDate}{June 3, 2026}
-\newcommand{\SummaryText}{[Summary: problem overview + methods for each sub-problem + key numerical results + conclusions, 300-500 words]}
+\newcommand{\SummaryText}{[Summary: conflict/hook + modeling mechanism for each sub-problem + representative quantitative takeaways via \textbackslash ResSmart / \textbackslash ResPctSmart + real-world validation and stakeholder decision guidance, 300--450 words]}
 \newcommand{\KeywordsText}{[Keyword1]; [Keyword2]; [Keyword3]}
-\newcommand{\TotalPages}{4}
 
 % ======== Page Header ========
 \fancyhf{}
 \fancyhead[L]{\sffamily Team \#\TeamNumber}
-\fancyhead[R]{\sffamily Page \thepage\ of \TotalPages}
-\fancyhead[C]{\rule[-0.1em]{0pt}{\baselineskip}}
+\fancyhead[R]{\sffamily Page \thepage\ of \pageref*{LastPage}}
+\fancyhead[C]{}
 \cfoot{}
 \pagestyle{fancy}
 
@@ -61,92 +104,49 @@
 \lstset{
   frame=topbottom,
   framerule=0.55pt,
-  framesep=0pt,
+  framesep=4pt,
   basicstyle=\ttfamily\small,
-  backgroundcolor=\color[gray]{0.97},
+  backgroundcolor=\color{morandiBg},
   numbers=none,
   showstringspaces=false,
   breaklines=true,
 }
 
-% ======== Table of Contents Entry ========
+% ======== Optional Manual ToC Helper ========
 \newcommand{\tocentry}[4]{\par\vskip0.55em\noindent%
   \ifthenelse{\equal{#4}{1}}{\bfseries}{}%
   #1\quad#2%
-  \leaders\hbox{$\cdot$}\hfill\ #
-  #3\par%
+  \leaders\hbox{$\cdot$}\hfill\ #3\par%
 }
 
 % ======== Document ========
 \begin{document}
 
-% ---- Summary Sheet ----
+% ---- Summary Sheet (strictly Page 1) ----
 \thispagestyle{empty}
 \vspace*{-1.8em}
 \begin{center}
-  \begin{tabular}{ccc}
-    \textbf{Problem Chosen} & \textbf{\MCMYear MCM/ICM Summary Sheet} & \textbf{Team Control Number} \\[0.7em]
-    \textbf{\LARGE\ProblemChosen} & & \textbf{\LARGE\TeamNumber}
+  \begin{tabular}{@{}>{\centering\arraybackslash}p{0.24\textwidth}@{\hspace{0.02\textwidth}}>{\centering\arraybackslash}p{0.48\textwidth}@{\hspace{0.02\textwidth}}>{\centering\arraybackslash}p{0.24\textwidth}@{}}
+    \textbf{Problem Chosen} & \textbf{\MCMYear\ MCM/ICM Summary Sheet} & \textbf{Team Control Number} \\[0.7em]
+    \textbf{\LARGE\ProblemChosen} & \textbf{\PaperTitle} & \textbf{\LARGE\TeamNumber}
   \end{tabular}
 \end{center}
 \vspace{0.43em}
 \hrule height 0.8pt
-\vspace{2.4em}
+\vspace{1.8em}
 \begin{center}\textbf{Summary}\end{center}
-\vspace{2.1em}
+\vspace{1.4em}
 \SummaryText
-\vspace{0.75em}
-\par\textbf{Keywords:} \KeywordsText
+\vspace{0.85em}
+\par\noindent\textbf{Keywords:} \KeywordsText
 \newpage
 
-% ---- Title Page ----
-\thispagestyle{empty}
-\vspace{0.25em}
-\begin{center}
-  \LARGE\PaperTitle
-\end{center}
-\vspace{5.8em}
-\begin{center}
-  \PaperDate
-\end{center}
-\vspace{2.75em}
-\begin{center}\textbf{Summary}\end{center}
-\vspace{2.1em}
-\SummaryText
-\vspace{0.75em}
-\par\textbf{Keywords:} \KeywordsText
-\newpage
-
-% ---- Contents Page ----
-\pagestyle{empty}
-\begin{center}
-  \LARGE\textbf{Contents}
-\end{center}
-\vspace{2em}
-\tocentry{1}{Introduction}{2}{1}
-\tocentry{}{~~~~1.1 Background}{2}{0}
-\tocentry{}{~~~~1.2 Problem Statement}{2}{0}
-\tocentry{}{~~~~1.3 Our Approach}{2}{0}
-\tocentry{2}{Assumptions and Justifications}{2}{1}
-\tocentry{3}{Model Design and Methodology}{2}{1}
-\tocentry{}{~~~~3.1 Prediction Model}{2}{0}
-\tocentry{}{~~~~3.2 Optimization Objective}{2}{0}
-\tocentry{}{~~~~3.3 Ensemble Strategy}{2}{0}
-\tocentry{4}{Solution and Results}{3}{1}
-\tocentry{}{~~~~4.1 Problem 1}{3}{0}
-\tocentry{}{~~~~4.2 Problem 2}{3}{0}
-\tocentry{}{~~~~4.3 Problem 3}{3}{0}
-\tocentry{5}{Sensitivity Analysis}{3}{1}
-\tocentry{6}{Strengths and Weaknesses}{3}{1}
-\tocentry{}{~~~~6.1 Strengths}{3}{0}
-\tocentry{}{~~~~6.2 Weaknesses}{3}{0}
-\tocentry{7}{Conclusions}{4}{1}
-\tocentry{}{Appendices}{4}{1}
-\tocentry{}{~~~~Appendix A Core Code}{4}{0}
+% ---- Contents Page (Page 2) ----
+\pagestyle{fancy}
+\tableofcontents
 \newpage
 
 % ---- Main Content ----
-\pagestyle{fancy}
 \input{sections/1_introduction}
 \pagebreak[100]
 \input{sections/2_assumptions}
@@ -154,6 +154,29 @@
 \input{sections/3_model_design}
 \pagebreak[100]
 \input{sections/4_solution}
+
+% ---- Example Key Finding Card & Pseudocode Box (replace with problem-specific content) ----
+\begin{keyfinding}[Template Anchor: Key Insight Summary]
+Place decisive cross-scenario trade-offs or non-technical stakeholder thresholds in a compact card so judges grasp actionable takeaways at a glance.
+\end{keyfinding}
+
+\begin{algorithm}[H]
+\caption{Template Iterative Solver Scheme}
+\label{alg:template_solver}
+\begin{algorithmic}[1]
+\Require Parameter vector $\theta_0$, tolerance $\varepsilon > 0$, maximum iterations $K_{\max}$
+\Ensure Converged state trajectory $x^*$ and objective value $J^*$
+\For{$k = 1, \dots, K_{\max}$}
+  \State Evaluate governing residual $r_k \gets \mathcal{F}(x_k; \theta_0)$
+  \State Update state $x_{k+1} \gets \Phi(x_k, r_k)$
+  \If{$\|r_k\|_2 < \varepsilon$}
+    \State \textbf{break}
+  \EndIf
+\EndFor
+\State \Return $x_k, J(x_k)$
+\end{algorithmic}
+\end{algorithm}
+
 \input{sections/5_sensitivity}
 \input{sections/6_strengths_weaknesses}
 \pagebreak[100]
@@ -161,13 +184,14 @@
 
 % ---- References ----
 \pagebreak[100]
-\fontsize{20pt}{24pt}\selectfont\textbf{References}\par\normalsize
+\section*{References}
+\addcontentsline{toc}{section}{References}
 \input{references}
 
 % ---- Appendices ----
 \pagebreak[100]
-\fontsize{28pt}{32pt}\selectfont\textbf{Appendices}\par
-\fontsize{20pt}{24pt}\selectfont\textbf{Appendix A \quad Core Code}\par\normalsize
+\section*{Appendix A \quad Core Code}
+\addcontentsline{toc}{section}{Appendix A: Core Code}
 \input{sections/A_code}
 
 \end{document}

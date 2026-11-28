@@ -18,7 +18,7 @@ project:
   competition: null
   language: zh
   time_budget_hours: null
-  mode: competition        # competition | high_assurance | testbed
+  mode: competition        # competition | o_award | high_assurance | testbed
 decisions:
   template: {value: null, status: pending, source: user}
   engine: {value: latex, status: defaulted, source: workflow}
@@ -27,7 +27,13 @@ decisions:
 stages: {}
 artifacts: {}
 approvals: []
+human_requests: []
 ```
+
+Run mode summary:
+- `competition`: compact high-rigor closed loop (default `figure_style: competition`).
+- **`o_award`**: full depth, Morandi visual polish (`figure_style: morandi_journal` defaulted), real-world empirical anchor (when data-less), 10–14 figures, 21–24 main pages (MCM/ICM), strict `CODE-LEAK` and `DEPTH-CHECK` QA gates.
+- `testbed`: repository regression & archival run (`ITERATION.md` / `TESTBED.md`).
 
 Each stage entry records `status`, `started_at`, `finished_at`, `inputs`,
 `outputs`, `gate`, and `return_to` when applicable. Each artifact entry records
@@ -47,6 +53,7 @@ Use only these states:
 | `PENDING` | Not started because prerequisites are absent | Resolve prerequisites |
 | `READY` | Prerequisites and capability checks pass | Run the stage |
 | `BLOCKED` | A blocking decision, capability, or dependency is unresolved | Ask, resolve, or explicitly waive |
+| `WAITING_HUMAN` | Paused on a standardized `work/human_requests/req_XX.md` ticket | Wait for user artifact/choice or invoke ticket Fallback |
 | `RUNNING` | Work is in progress | Continue and record evidence |
 | `PASS` | Output contract and gate pass | Enable dependents |
 | `FAIL` | Evidence or output contract failed | Follow `return_to` |
@@ -140,3 +147,14 @@ types, prevents a material failure, or can be checked automatically. Otherwise
 keep it in the owning stage reference. Retire or downgrade rules that become
 obsolete. After a promoted rule changes, run the affected regression checks from
 `TESTBED.md` before release.
+
+## 8. Human-in-the-Loop Escalation Protocol (v4.2)
+
+High-leverage pause/handoff is reserved ONLY for work the local Python/LaTeX sandbox genuinely cannot replace:
+1. **Valid triggers**:
+   - `visual_asset`: manual Nano Banana generation of 1–2 complex hero 3D visual components (with copy-paste Morandi pure-white-bg zero-text prompt + target save path `work/figures/assets/comp_XX.png`);
+   - `external_sim`: heavy multi-physics FEM/CFD (ANSYS/COMSOL), proprietary MATLAB/Simulink blocks, or massive GPU sweeps exceeding practical local runtime;
+   - `manual_data`: physical measurement / field sampling / gated external lookup requested by user;
+   - `decision`: core P1/P2 paradigm or assumption trade-offs.
+2. **Hard non-offloading rule**: Standard vectorized Python, LP/MILP/NLP, ODE/PDE integration, and seconds-scale Monte Carlo/Bootstrap **MUST** be executed autonomously by the agent—never outsourced to the user.
+3. **Standardized ticket (`work/human_requests/req_XX.md`)**: Never ask vaguely. Always register via `manifest_cli.py request` (sets stage to `WAITING_HUMAN`) and include: goal/context, ready-to-run prompt or self-contained parameter script, strict CSV/JSON schema & save path, and a mandatory **Fallback** route (pure SVG/HTML vector diagram or reduced-order Python solver) so declining/skipping never stalls delivery.

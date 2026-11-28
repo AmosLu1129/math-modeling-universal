@@ -30,7 +30,11 @@ description: 把模型文档实现为可复现代码（Python 优先，支持 MA
 
 - **语言与工具**：Python 优先（优化 `scipy.optimize`/PuLP/OR-Tools CP-SAT；多目标 `pymoo` 或 ε-约束 + MILP；统计 `statsmodels`；ML `scikit-learn`/LightGBM；ODE `solve_ivp`；图论 `networkx`）。运筹优化题先读 `_shared/references/optimization-playbook.md`。
 - **代码组织**：`work/code/` 只保留最终版代码（探索/调试脚本放 `work/scratch/`），每文件头部注明【题号 / 模型 / 功能 / 依赖 / 入口】；这是 `code_appendix.pdf` 的唯一数据源。
-- **`results.json` 唯一出处**：由脚本（如 `make_results.py`）从求解产物汇编并自带 `verify()` 断言，禁止手抄；强制在顶层生成 **`key_metrics`** 路径清单（配合 `consistency_check.py --key-metrics` 聚焦核心指标），下游反事实与策略评估必须复用**同一套后验抽样集合**；多目标前沿若在评估后按可行门槛剪枝，必须重算 `front_size` 与双实现 `hypervolume`。多目标/随机策略按 `eps_main`（含 `hypervolume`、`hypervolume_ref`、`hypervolume_crosscheck`、`pareto[].z*_hat`、`pareto[].plan_ref`、`front_implementable`）、`policy`、`rollout`（含 `out_of_sample`）结构存放。
+- **`results.json` 唯一出处**：由脚本（如 `make_results.py`）从求解产物汇编并自带 `verify()` 断言，禁止手抄；强制在顶层生成 **`key_metrics`** 路径清单（配合 `consistency_check.py --key-metrics` 聚焦核心指标），下游反事实与策略评估必须复用**同一套后验抽样集合**；多目标前沿若在评估后按可行门槛剪枝，必须重算 `front_size` 与双实现 `hypervolume`。多目标/随机策略按 `eps_main`（含 `hypervolume`、`hypervolume_ref`、`hypervolume_crosscheck`、`pareto[].z*_hat`、`pareto[].plan_ref`、`front_implementable`）、`policy`、`rollout`（含 `out_of_sample`）结构存放。如需精控论文小数位，可在顶层追加可选 `"display_precision"` 字典（由 `export_paper_macros.py --format-mode smart` 读取），并按需保存基线 vs 改进的 Before-vs-After 对照数组供阶段 7 可视化。
+- **分阶段模块化缓存（长算可选）**：当求解包含耗时 `>30s` 的多阶段仿真、蒙特卡洛抽样或灵敏度扫描时，按上游/下游拆分为模块化阶段并接入 `_shared/scripts/stage_cache.py`（`StageCache("work/scratch/cache")` 按参数、输入文件与代码 SHA-256 指纹自动失效；缓存目录由 `pack_submission.py` 自动从终交包剔除，最终定稿核验冷启动可复现性时可设 `MM_FORCE_RECOMPUTE=1` 全量重跑）。
+- **人机协同（HITL）外部重型仿真外包边界**：
+  - **绝不推卸日常求解**：标准向量化 Python 求解、LP/MILP/NLP、ODE 积分与秒级蒙特卡洛/Bootstrap **必须由本环节直接写完跑通**；
+  - **高价值外包暂停条件**：仅当需要超出沙盒算力/工具栈的**多物理场 FEM/CFD（ANSYS/COMSOL）、MATLAB/Simulink 专有模块或 GPU 大规模蒙特卡洛扫描**时，方可通过 `_shared/scripts/manifest_cli.py request --stage S5_solver --kind external_sim` 暂停；同时必须交付 `work/human_requests/req_XX.md`，写明**自包含参数化脚本/配置 + 预期 CSV/JSON Schema + 落盘路径（如 `work/results/external_sim.csv`）+ Python 降阶保底方案（Fallback）**，绝不允许只口头抛下一句“请帮我跑仿真”。
 - **官方结果模板回填**：使用 `_shared/scripts/fill_result_template.py`，回填后自动回读校验。
 - **`final_models.md`（初版）**：汇总每个模型的最终方程、代入参数与初步指标，交阶段 6 定稿。
 

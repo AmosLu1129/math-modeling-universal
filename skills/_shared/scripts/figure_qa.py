@@ -3,9 +3,10 @@
 """图表自检工具（math-figures 配套）。
 
 三件事：
-1. render_preview(fig, out, dpi=150)  —— 把画好的 Figure 渲染成 PNG 预览
-2. audit_figure(fig, out_png=None)    —— 绘制时捕获 matplotlib 缺字/渲染警告，返回问题列表
-3. check_files(paths, min_dpi=300)    —— 检查已导出文件：格式/DPI/非空/禁用 JPEG（原生展开通配符与目录）
+1. render_preview(fig, out, dpi=150)            —— 把画好的 Figure 渲染成 PNG 预览
+2. audit_figure(fig, out_png=None)              —— 绘制时捕获 matplotlib 缺字/渲染警告，返回问题列表
+3. check_files(paths, min_dpi=300)              —— 检查已导出文件：格式/DPI/非空/禁用 JPEG（原生展开通配符与目录）
+4. generate_accessibility_previews(paths, ...)   —— 导出 _*_grayscale.png 与 _*_deuteranopia.png 灰度/色盲自检图
 
 用法（在绘图脚本末尾）：
     import sys; sys.path.insert(0, "<本文件所在目录>")
@@ -18,9 +19,10 @@
 检查已导出文件：
     python figure_qa.py check "work/figures/*.png" --min-dpi 300
     python figure_qa.py check work/figures/ --min-dpi 300
+    python figure_qa.py access work/figures/
     python figure_qa.py --self-test
 
-需要环境：matplotlib；PNG DPI 检查需要 Pillow（可选，缺失时跳过）。
+需要环境：matplotlib；PNG DPI 与灰度/色盲模拟需要 Pillow + numpy。
 """
 
 from __future__ import annotations
@@ -174,6 +176,75 @@ def check_files(paths: list[str], min_dpi: int = 300) -> list[tuple[str, str, st
     return results
 
 
+def _srgb_to_linear(arr: "np.ndarray") -> "np.ndarray":
+    import numpy as np
+
+    return np.where(arr <= 0.04045, arr / 12.92, ((arr + 0.055) / 1.055) ** 2.4)
+
+
+def _linear_to_srgb(arr: "np.ndarray") -> "np.ndarray":
+    import numpy as np
+
+    arr = np.clip(arr, 0.0, 1.0)
+    return np.where(arr <= 0.0031308, arr * 12.92, 1.055 * (arr ** (1.0 / 2.4)) - 0.055)
+
+
+def generate_accessibility_previews(
+    paths: list[str], out_dir: str | None = None
+) -> list[tuple[str, str, str]]:
+    """为正式 PNG 图生成 `_<stem>_grayscale.png` 与 `_<stem>_deuteranopia.png` 自检预览。"""
+    try:
+        import numpy as np
+        from PIL import Image
+    except ImportError as exc:
+        return [("<env>", "FAIL", f"缺少 Pillow/numpy 依赖，无法生成无障碍预览：{exc}")]
+
+    deut_mat = np.array(
+        [
+            [0.367322, 0.860646, -0.227968],
+            [0.280085, 0.672501, 0.047413],
+            [-0.011820, 0.042940, 0.968881],
+        ],
+        dtype=np.float32,
+    )
+
+    results: list[tuple[str, str, str]] = []
+    expanded = expand_paths(paths)
+    for p in expanded:
+        base = os.path.basename(p)
+        if base.startswith("_") or not os.path.isfile(p):
+            continue
+        if os.path.splitext(p)[1].lower() != ".png":
+            continue
+        dest_dir = os.path.abspath(out_dir) if out_dir else os.path.dirname(os.path.abspath(p))
+        os.makedirs(dest_dir, exist_ok=True)
+        stem = os.path.splitext(base)[0]
+
+        with Image.open(p) as im:
+            rgb = im.convert("RGB")
+            arr = np.asarray(rgb, dtype=np.float32) / 255.0
+
+        # Rec.709 luminance grayscale
+        lum = 0.2126 * arr[:, :, 0] + 0.7152 * arr[:, :, 1] + 0.0722 * arr[:, :, 2]
+        gray_u8 = np.clip(np.round(np.stack([lum, lum, lum], axis=2) * 255.0), 0, 255).astype(np.uint8)
+        gray_p = os.path.join(dest_dir, f"_{stem}_grayscale.png")
+        Image.fromarray(gray_u8, mode="RGB").save(gray_p, format="PNG")
+
+        # Viénot/Machado linear-RGB deuteranopia simulation
+        lin = _srgb_to_linear(arr)
+        deut_lin = lin @ deut_mat.T
+        deut_srgb = _linear_to_srgb(deut_lin)
+        deut_u8 = np.clip(np.round(deut_srgb * 255.0), 0, 255).astype(np.uint8)
+        deut_p = os.path.join(dest_dir, f"_{stem}_deuteranopia.png")
+        Image.fromarray(deut_u8, mode="RGB").save(deut_p, format="PNG")
+
+        results.append((p, "PASS", f"生成预览: {os.path.basename(gray_p)}, {os.path.basename(deut_p)}"))
+
+    if not results:
+        results.append(("<input>", "WARN", "未发现需要生成灰度/色盲预览的非下划线 .png 文件"))
+    return results
+
+
 def report(issues: list[tuple[str, str]]) -> bool:
     """打印自检结果，全部无 FAIL 返回 True。"""
     if not issues:
@@ -241,19 +312,40 @@ def self_test() -> int:
         r_prev = check_files([os.path.join(tdir, "_*.png")], min_dpi=300)
         assert len(r_prev) == 1 and r_prev[0][1] == "WARN", r_prev
 
-    print("[SELF-TEST] PASS 5/5")
+        # 6. Accessibility previews: grayscale & deuteranopia generation (prefixed with _ so check_files skips them)
+        import numpy as np
+
+        acc_res = generate_accessibility_previews([ok_png])
+        assert len(acc_res) == 1 and acc_res[0][1] == "PASS", acc_res
+        gray_p = os.path.join(tdir, "_fig_ok_grayscale.png")
+        deut_p = os.path.join(tdir, "_fig_ok_deuteranopia.png")
+        assert os.path.isfile(gray_p) and os.path.isfile(deut_p)
+        with Image.open(gray_p) as gm:
+            assert gm.size == (20, 20)
+            g_arr = np.asarray(gm.convert("RGB"))
+            assert np.array_equal(g_arr[:, :, 0], g_arr[:, :, 1]) and np.array_equal(g_arr[:, :, 1], g_arr[:, :, 2])
+        with Image.open(deut_p) as dm:
+            assert dm.size == (20, 20)
+        r_dir2 = {os.path.basename(p): lvl for p, lvl, _ in check_files([tdir], min_dpi=300)}
+        assert "_fig_ok_grayscale.png" not in r_dir2 and "_fig_ok_deuteranopia.png" not in r_dir2, r_dir2
+
+    print("[SELF-TEST] PASS 6/6")
     return 0
 
 
 def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
-    ap = argparse.ArgumentParser(description="图表文件合规检查")
-    ap.add_argument("cmd", choices=["check"], help="check：检查已导出图文件")
+    ap = argparse.ArgumentParser(description="图表文件合规检查与无障碍预览生成")
+    ap.add_argument("cmd", choices=["check", "access"], help="check：检查已导出图文件；access：生成灰度/色盲自检图")
     ap.add_argument("paths", nargs="+", help="图文件路径或目录（内置展开通配符）")
     ap.add_argument("--min-dpi", type=int, default=300, help="位图最低 DPI（默认 300）")
+    ap.add_argument("--out-dir", default="", help="access 模式可选：输出预览图目录（默认同目录）")
     args = ap.parse_args()
-    results = check_files(args.paths, min_dpi=args.min_dpi)
+    if args.cmd == "access":
+        results = generate_accessibility_previews(args.paths, out_dir=args.out_dir or None)
+    else:
+        results = check_files(args.paths, min_dpi=args.min_dpi)
     failed = False
     for path, level, detail in results:
         print(f"[{level}] {path}: {detail}")
